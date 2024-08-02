@@ -21,15 +21,15 @@ class PackagePathFilter(logging.Filter):
         return True
 
 
-def get_cloudwatch_handler(log_group_name=AWS.CloudWatch.LOG_GROUP):
+def get_cloudwatch_handler(log_stream_name):
     return watchtower.CloudWatchLogHandler(
-        log_group=log_group_name,
-        stream_name=AWS.CloudWatch.TEXTRACT_RUNNER_STREAM,
+        log_group=AWS.CloudWatch.LOG_GROUP,
+        stream_name=log_stream_name,
         boto3_client=logs_client
     )
 
 
-def setup_cloudwatch_logging(project_id=None, document_name=None):
+def get_cloudwatch_logger(project_id=None, document_name=None, log_stream_name=None):
     logging.setLogRecordFactory(LogRecordIgnoreMissing)
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
@@ -38,7 +38,7 @@ def setup_cloudwatch_logging(project_id=None, document_name=None):
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
 
-    cloudwatch_handler = get_cloudwatch_handler()
+    cloudwatch_handler = get_cloudwatch_handler(log_stream_name)
     console_handler = logging.StreamHandler()
 
     if project_id and document_name:
