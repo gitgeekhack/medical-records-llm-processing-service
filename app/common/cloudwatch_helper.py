@@ -47,12 +47,12 @@ def get_cloudwatch_logger(project_id=None, document_name=None, log_stream_name=N
         formatter = logging.Formatter('[ProjectID: %(project_id)s] - '
                                       '[Document: %(document_name)s] - '
                                       '[Level: %(levelname)s] - '
-                                      '[Module: %(pathname)s] - '
+                                      '[File: %(filename)s] - '
                                       '[Function: %(funcName)s] - '
                                       '%(message)s')
     else:
         formatter = logging.Formatter('[Level: %(levelname)s] - '
-                                      '[Module: %(pathname)s] - '
+                                      '[File: %(filename)s] - '
                                       '[Function: %(funcName)s] - '
                                       '%(message)s')
 

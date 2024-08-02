@@ -24,8 +24,8 @@ class AWS:
         SNS_TOPIC_ARN = 'arn:aws:sns:ap-south-1:851725323009:textract-async-complete-sns'
         ROLE_ARN = 'arn:aws:iam::851725323009:role/AmazonTextractServiceRole'
 
+
 class MedicalInsights:
-    AWS_BUCKET = "ds-medical-insights-extractor"
     TOTAL_PAGES_THRESHOLD = 1000
     REQUEST_FOLDER_NAME = "request"
     RESPONSE_FOLDER_NAME = "response"

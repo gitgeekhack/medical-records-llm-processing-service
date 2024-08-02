@@ -6,11 +6,14 @@ from concurrent import futures
 
 from app.common.sqs_helper import SQSHelper
 from app.constant import AWS
-from app.service.helper.textract_helper import get_page_wise_text
+from app.service.helper.textract_helper import TextractHelper
 from app.service.nlp_extractor.document_summarizer import DocumentSummarizer
 from app.service.nlp_extractor.encounters_extractor import EncountersExtractor
 from app.service.nlp_extractor.entity_extractor import get_extracted_entities
 from app.service.nlp_extractor.phi_and_doc_type_extractor import PHIAndDocTypeExtractor
+
+import logging
+logging.getLogger("faiss").setLevel(logging.WARNING)
 
 
 class LLMProcessing:
@@ -19,6 +22,7 @@ class LLMProcessing:
         self.project_id = project_id
         self.document_name = document_name
         self.sqs_helper = SQSHelper()
+        self.textract_helper = TextractHelper(logger)
 
     async def get_summary(self, data):
         """ This method is used to get document summary """
@@ -92,8 +96,9 @@ class LLMProcessing:
     async def process_doc(self, input_message):
         if input_message['Status'] != "SUCCEEDED":
             await self.publish_textract_failed_message()
+            return
 
-        page_wise_text = await get_page_wise_text(input_message)
+        page_wise_text = await self.textract_helper.get_page_wise_text(input_message)
 
         tasks = []
         with futures.ThreadPoolExecutor(2) as executor:
