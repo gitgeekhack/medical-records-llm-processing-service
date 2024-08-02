@@ -5,29 +5,27 @@ import json
 import dateparser
 from datetime import datetime, timedelta
 
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from langchain.chains import RetrievalQA
-from langchain.llms.bedrock import Bedrock
+from langchain_aws import BedrockLLM
 from langchain.prompts import PromptTemplate
 from langchain.docstore.document import Document
-from langchain.embeddings import BedrockEmbeddings
+from langchain_community.embeddings import BedrockEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-from app import logger
 from app.constant import AWS
 from app.constant import MedicalInsights
-from app.service.medical_document_insights.nlp_extractor import bedrock_client, get_llm_input_tokens
+from app.service.nlp_extractor import bedrock_client, get_llm_input_tokens
 
 
 class PHIAndDocTypeExtractor:
-    def __init__(self):
-        os.environ['AWS_DEFAULT_REGION'] = AWS.BotoClient.AWS_DEFAULT_REGION
-
+    def __init__(self, logger):
+        self.logger = logger
         self.bedrock_client = bedrock_client
         self.model_id_llm = 'anthropic.claude-instant-v1'
         self.model_embeddings = 'amazon.titan-embed-text-v1'
 
-        self.anthropic_llm = Bedrock(
+        self.anthropic_llm = BedrockLLM(
             model_id=self.model_id_llm,
             model_kwargs={
                 "max_tokens_to_sample": 4000,
@@ -39,7 +37,7 @@ class PHIAndDocTypeExtractor:
             client=self.bedrock_client,
         )
 
-        self.titan_llm = Bedrock(model_id=self.model_embeddings, client=self.bedrock_client)
+        self.titan_llm = BedrockLLM(model_id=self.model_embeddings, client=self.bedrock_client)
         self.bedrock_embeddings = BedrockEmbeddings(model_id=self.model_embeddings, client=self.bedrock_client)
 
     async def __get_docs_embeddings(self, data):
@@ -53,13 +51,13 @@ class PHIAndDocTypeExtractor:
             emb_tokens += self.titan_llm.get_num_tokens(i.page_content)
 
         y = time.time()
-        logger.info(f'[Medical-Insights][PHI-Embeddings] Chunk Preparation Time: {y - x}')
+        self.logger.info(f'[Medical-Insights][PHI-Embeddings] Chunk Preparation Time: {y - x}')
 
         vector_embeddings = FAISS.from_documents(
             documents=docs,
             embedding=self.bedrock_embeddings,
         )
-        logger.info(f'[Medical-Insights][PHI-Embeddings][{self.model_embeddings}] Input embedding tokens: {emb_tokens}'
+        self.logger.info(f'[Medical-Insights][PHI-Embeddings][{self.model_embeddings}] Input embedding tokens: {emb_tokens}'
                     f'and Generation time: {time.time() - y}')
 
         return vector_embeddings
@@ -147,7 +145,7 @@ class PHIAndDocTypeExtractor:
         doc_type_query = MedicalInsights.Prompts.DOC_TYPE_PROMPT
         prompt_template = MedicalInsights.Prompts.PROMPT_TEMPLATE
 
-        logger.info(f'[Medical-Insights][PHI-DocumentType][{self.model_embeddings}] Embedding tokens for LLM call: '
+        self.logger.info(f'[Medical-Insights][PHI-DocumentType][{self.model_embeddings}] Embedding tokens for LLM call: '
                     f'{self.titan_llm.get_num_tokens(doc_type_query) + self.titan_llm.get_num_tokens(prompt_template)}')
 
         prompt = PromptTemplate(
@@ -164,12 +162,12 @@ class PHIAndDocTypeExtractor:
             chain_type_kwargs={"prompt": prompt}
         )
 
-        answer = qa({"query": doc_type_query})
+        answer = qa.invoke({"query": doc_type_query})
 
         input_tokens = get_llm_input_tokens(self.anthropic_llm, answer) + self.anthropic_llm.get_num_tokens(prompt_template)
         output_tokens = self.anthropic_llm.get_num_tokens(answer['result'])
 
-        logger.info(f'[Medical-Insights][PHI-DocumentType][{self.model_id_llm}] Input tokens: {input_tokens} '
+        self.logger.info(f'[Medical-Insights][PHI-DocumentType][{self.model_id_llm}] Input tokens: {input_tokens} '
                     f'Output tokens: {output_tokens}')
 
         response = json.loads(answer['result'])
@@ -192,7 +190,7 @@ class PHIAndDocTypeExtractor:
         query = MedicalInsights.Prompts.PHI_PROMPT
         prompt_template = MedicalInsights.Prompts.PROMPT_TEMPLATE
 
-        logger.info(f'[Medical-Insights][PHI-Dates][{self.model_embeddings}] Embedding tokens for LLM call: '
+        self.logger.info(f'[Medical-Insights][PHI-Dates][{self.model_embeddings}] Embedding tokens for LLM call: '
                     f'{self.titan_llm.get_num_tokens(query) + self.titan_llm.get_num_tokens(prompt_template)}')
 
         prompt = PromptTemplate(
@@ -209,13 +207,13 @@ class PHIAndDocTypeExtractor:
             chain_type_kwargs={"prompt": prompt}
         )
 
-        answer = qa({"query": query})
+        answer = qa.invoke({"query": query})
         response = answer['result']
 
         input_tokens = get_llm_input_tokens(self.anthropic_llm, answer) + self.anthropic_llm.get_num_tokens(prompt_template)
         output_tokens = self.anthropic_llm.get_num_tokens(response)
 
-        logger.info(f'[Medical-Insights][PHI-Dates][{self.model_id_llm}] Input tokens: {input_tokens} '
+        self.logger.info(f'[Medical-Insights][PHI-Dates][{self.model_id_llm}] Input tokens: {input_tokens} '
                     f'Output tokens: {output_tokens}')
 
         matches = await self.__extract_values_between_curly_braces(response)
@@ -239,7 +237,7 @@ class PHIAndDocTypeExtractor:
         query = MedicalInsights.Prompts.PATIENT_INFO_PROMPT
         prompt_template = MedicalInsights.Prompts.PROMPT_TEMPLATE
 
-        logger.info(f'[Medical-Insights][PHI-Name&DOB][{self.model_embeddings}] Embedding tokens for LLM call: '
+        self.logger.info(f'[Medical-Insights][PHI-Name&DOB][{self.model_embeddings}] Embedding tokens for LLM call: '
                     f'{self.titan_llm.get_num_tokens(query) + self.titan_llm.get_num_tokens(prompt_template)}')
 
         prompt = PromptTemplate(
@@ -256,12 +254,12 @@ class PHIAndDocTypeExtractor:
             chain_type_kwargs={"prompt": prompt}
         )
 
-        answer = qa({"query": query})
+        answer = qa.invoke({"query": query})
 
         input_tokens = get_llm_input_tokens(self.anthropic_llm, answer) + self.anthropic_llm.get_num_tokens(prompt_template)
         output_tokens = self.anthropic_llm.get_num_tokens(answer['result'])
 
-        logger.info(f'[Medical-Insights][PHI-Name&DOB][{self.model_id_llm}] Input tokens: {input_tokens} '
+        self.logger.info(f'[Medical-Insights][PHI-Name&DOB][{self.model_id_llm}] Input tokens: {input_tokens} '
                     f'Output tokens: {output_tokens}')
 
         processed_result = await self.__process_patient_name_and_dob(answer['result'])
@@ -276,19 +274,19 @@ class PHIAndDocTypeExtractor:
 
         t = time.time()
         embeddings = await self.__get_docs_embeddings(data)
-        logger.info(f"[Medical-Insights][PHI] Embedding Generation for PHI and Document Type is completed in {time.time() - t} seconds.")
+        self.logger.info(f"[Medical-Insights][PHI] Embedding Generation for PHI and Document Type is completed in {time.time() - t} seconds.")
 
         t = time.time()
         document_type = await self.__get_document_type(embeddings)
-        logger.info(f"[Medical-Insights][PHI] Identification of Document Type is completed in {time.time() - t} seconds.")
+        self.logger.info(f"[Medical-Insights][PHI] Identification of Document Type is completed in {time.time() - t} seconds.")
 
         t = time.time()
         patient_info = await self.__get_phi_dates(embeddings, document_type)
-        logger.info(f"[Medical-Insights][PHI] PHI Dates Extraction is completed in {time.time() - t} seconds.")
+        self.logger.info(f"[Medical-Insights][PHI] PHI Dates Extraction is completed in {time.time() - t} seconds.")
 
         t = time.time()
         patient_name_and_dob = await self.__get_patient_name_and_dob(embeddings)
-        logger.info(f"[Medical-Insights][PHI] Patient Name and DOB Extraction is completed in {time.time() - t} seconds.")
+        self.logger.info(f"[Medical-Insights][PHI] Patient Name and DOB Extraction is completed in {time.time() - t} seconds.")
 
         patient_info['patient_information'].update(patient_name_and_dob)
         return patient_info

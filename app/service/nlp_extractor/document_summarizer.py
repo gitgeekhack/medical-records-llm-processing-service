@@ -2,23 +2,22 @@ import os
 import time
 from fuzzywuzzy import fuzz
 
-from langchain.llms.bedrock import Bedrock
+from langchain_aws import BedrockLLM
 from langchain.docstore.document import Document
 from langchain.chains.question_answering import load_qa_chain
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-from app import logger
 from app.constant import AWS, MedicalInsights
-from app.service.medical_document_insights.nlp_extractor import bedrock_client
+from app.service.nlp_extractor import bedrock_client
 
 
 class DocumentSummarizer:
-    def __init__(self):
-        os.environ['AWS_DEFAULT_REGION'] = AWS.BotoClient.AWS_DEFAULT_REGION
+    def __init__(self, logger):
+        self.logger = logger
         self.bedrock_client = bedrock_client
         self.model_id_llm = 'anthropic.claude-v2'
 
-        self.anthropic_llm = Bedrock(
+        self.anthropic_llm = BedrockLLM(
             model_id=self.model_id_llm,
             model_kwargs={
                 "max_tokens_to_sample": 10000,
@@ -34,8 +33,8 @@ class DocumentSummarizer:
 
     async def __generate_summary(self, docs, query):
         qa = load_qa_chain(self.anthropic_llm, chain_type="stuff")
-        chain_run = qa.run(input_documents=docs, question=query)
-        return chain_run
+        chain_run = qa.invoke(input={'input_documents': docs, 'question': query})
+        return chain_run['output_text']
 
     async def __data_formatter(self, json_data):
         """ This method is used to format the data and prepare chunks """
@@ -103,7 +102,7 @@ class DocumentSummarizer:
         x = time.time()
         docs, chunk_length = await self.__data_formatter(json_data)
 
-        logger.info(f'[Medical-Insights][Summary] Chunk Preparation Time: {time.time() - x}')
+        self.logger.info(f'[Medical-Insights][Summary] Chunk Preparation Time: {time.time() - x}')
 
         stuff_calls = await self.__get_stuff_calls(docs, chunk_length)
 
@@ -120,7 +119,7 @@ class DocumentSummarizer:
                 input_tokens = (sum(chunk_length) + self.anthropic_llm.get_num_tokens(query))
                 output_tokens = self.anthropic_llm.get_num_tokens(summary)
 
-                logger.info(f'[Medical-Insights][Summary][{self.model_id_llm}] Input tokens: {input_tokens} '
+                self.logger.info(f'[Medical-Insights][Summary][{self.model_id_llm}] Input tokens: {input_tokens} '
                             f'Output tokens: {output_tokens} LLM execution time: {time.time() - y}')
         else:
             response_summary = [await self.__generate_summary(docs, query) for docs in stuff_calls]
@@ -134,7 +133,7 @@ class DocumentSummarizer:
             sum_response_summary = sum(self.anthropic_llm.get_num_tokens(rs) for rs in response_summary)
             output_tokens = sum_response_summary + self.anthropic_llm.get_num_tokens(summary)
 
-            logger.info(f'[Medical-Insights][Summary][{self.model_id_llm}] Input tokens: {input_tokens} '
+            self.logger.info(f'[Medical-Insights][Summary][{self.model_id_llm}] Input tokens: {input_tokens} '
                         f'Output tokens: {output_tokens} LLM execution time: {time.time() - y}')
 
         final_summary = await self.__post_processing(summary)

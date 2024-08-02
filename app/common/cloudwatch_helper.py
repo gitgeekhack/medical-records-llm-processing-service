@@ -1,11 +1,13 @@
 import logging
 import os
 import sys
+import boto3
 import watchtower
-
-from app import logs_client
-from app.constant import AWS
 from logging_utilities.log_record import LogRecordIgnoreMissing
+
+from app.constant import AWS
+
+logs_client = boto3.client('logs', region_name=AWS.BotoClient.AWS_DEFAULT_REGION)
 
 
 class PackagePathFilter(logging.Filter):

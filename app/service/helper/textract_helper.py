@@ -1,4 +1,5 @@
 import boto3
+import json
 
 from app.constant import AWS
 
@@ -34,5 +35,9 @@ async def get_page_wise_text(input_message, page_wise_text={}, next_token=None):
 
     if 'NextToken' in textract_response:
         await get_page_wise_text(input_message, page_wise_text, next_token=textract_response['NextToken'])
+
+    # result = json.dumps(page_wise_text)
+    # result = result.encode("utf-8")
+    # await s3_utils.upload_object(AWS.S3.MEDICAL_BUCKET_NAME, s3_textract_path, result, AWS.S3.ENCRYPTION_KEY)
 
     return page_wise_text

@@ -7,24 +7,22 @@ import multiprocessing
 from concurrent import futures
 
 from langchain.chains import RetrievalQA
-from langchain.vectorstores import FAISS
-from langchain.llms.bedrock import Bedrock
+from langchain_community.vectorstores import FAISS
+from langchain_aws import BedrockLLM
 from langchain.prompts import PromptTemplate
 from langchain.docstore.document import Document
-from langchain.embeddings import BedrockEmbeddings
+from langchain_community.embeddings import BedrockEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-from app import logger
 from app.constant import AWS
 from app.constant import MedicalInsights
-from app.service.medical_document_insights.nlp_extractor import bedrock_client, get_llm_input_tokens
+from app.service.nlp_extractor import bedrock_client, get_llm_input_tokens
 
-os.environ['AWS_DEFAULT_REGION'] = AWS.BotoClient.AWS_DEFAULT_REGION
 
 model_id_llm = 'anthropic.claude-instant-v1'
 model_embeddings = 'amazon.titan-embed-text-v1'
 
-anthropic_llm = Bedrock(
+anthropic_llm = BedrockLLM(
     model_id=model_id_llm,
     model_kwargs={
         "max_tokens_to_sample": 10000,
@@ -35,13 +33,14 @@ anthropic_llm = Bedrock(
     client=bedrock_client,
 )
 
-titan_llm = Bedrock(model_id=model_embeddings, client=bedrock_client)
+titan_llm = BedrockLLM(model_id=model_embeddings, client=bedrock_client)
 bedrock_embeddings = BedrockEmbeddings(model_id=model_embeddings, client=bedrock_client)
 
 emb_tokens = None
 emb_prompt_tokens = None
 input_tokens = None
 output_tokens = None
+logger = None
 
 
 async def is_alpha(entity):
@@ -143,7 +142,7 @@ async def get_medical_entities(key, value, page_wise_entities):
         chain_type_kwargs={"prompt": prompt}
     )
 
-    answer = qa({"query": query})
+    answer = qa.invoke({"query": query})
     response = answer['result']
 
     input_tokens.append(get_llm_input_tokens(anthropic_llm, answer) + anthropic_llm.get_num_tokens(prompt_template))
@@ -160,10 +159,11 @@ def extract_entity_handler(key, value, page_wise_entities):
     return x
 
 
-async def get_extracted_entities(json_data):
+async def get_extracted_entities(json_data, logger_instance):
     """ This method is used to provide medical entities from document"""
 
-    global emb_tokens, emb_prompt_tokens, input_tokens, output_tokens
+    global emb_tokens, emb_prompt_tokens, input_tokens, output_tokens, logger
+    logger = logger_instance
     manager = multiprocessing.Manager()
     emb_tokens = manager.list()
     emb_prompt_tokens = manager.list()

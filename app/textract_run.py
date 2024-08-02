@@ -6,18 +6,13 @@ import asyncio
 from app.service.start_textract_async import TextractProcessor
 from app.common.cloudwatch_helper import get_cloudwatch_logger
 from app.constant import AWS
+from app.common.utils import get_project_id_and_document
 
 logger = get_cloudwatch_logger()
 input_message = os.getenv('INPUT_MESSAGE')
 if not input_message:
     logger.info('Configuration incomplete. Please configure INPUT_MESSAGE environment variable.')
     exit(0)
-
-
-async def get_project_id_and_document(document_path):
-    document_name = os.path.basename(document_path)
-    project_id = document_path.split('/')[2]
-    return project_id, document_name
 
 
 async def main():

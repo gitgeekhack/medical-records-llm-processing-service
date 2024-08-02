@@ -25,7 +25,7 @@ class LLMProcessing:
 
         x = time.time()
         self.logger.info("[Medical-Insights] Summary generation is started...")
-        document_summarizer = DocumentSummarizer()
+        document_summarizer = DocumentSummarizer(self.logger)
         summary = await document_summarizer.get_summary(data)
         self.logger.info(f"[Medical-Insights] Summary is generated in {time.time() - x} seconds.")
         return summary
@@ -40,7 +40,7 @@ class LLMProcessing:
 
         x = time.time()
         self.logger.info("[Medical-Insights] Entity Extraction is started...")
-        entities = await get_extracted_entities(data)
+        entities = await get_extracted_entities(data, self.logger)
         self.logger.info(f"[Medical-Insights] Entity Extraction is completed in {time.time() - x} seconds.")
         return entities
 
@@ -54,7 +54,7 @@ class LLMProcessing:
 
         x = time.time()
         self.logger.info("[Medical-Insights] Extraction of PHI and Document Type is started...")
-        phi_and_doc_type_extractor = PHIAndDocTypeExtractor()
+        phi_and_doc_type_extractor = PHIAndDocTypeExtractor(self.logger)
         patient_information = await phi_and_doc_type_extractor.get_patient_information(data)
         self.logger.info(
             f"[Medical-Insights] Extraction of PHI and Document Type is completed in {time.time() - x} seconds.")
@@ -65,19 +65,19 @@ class LLMProcessing:
         x = _loop.run_until_complete(self.get_patient_information(data))
         return x
 
-    async def get_encounters(self, data):
+    async def get_encounters(self, data, filename):
         """ This method is used to get phi dates from document """
 
         x = time.time()
         self.logger.info("[Medical-Insights] Encounters Extraction is started...")
-        encounters_extractor = EncountersExtractor()
-        encounter_events = await encounters_extractor.get_encounters(data)
+        encounters_extractor = EncountersExtractor(self.logger)
+        encounter_events = await encounters_extractor.get_encounters(data, filename)
         self.logger.info(f"[Medical-Insights] Encounters Extraction is completed in {time.time() - x} seconds.")
         return encounter_events
 
-    def get_encounters_handler(self, data):
+    def get_encounters_handler(self, data, filename):
         _loop = asyncio.new_event_loop()
-        x = _loop.run_until_complete(self.get_encounters(data))
+        x = _loop.run_until_complete(self.get_encounters(data, filename))
         return x
 
     async def publish_textract_failed_message(self):
@@ -95,17 +95,17 @@ class LLMProcessing:
 
         page_wise_text = await get_page_wise_text(input_message)
 
-        task = []
-        with futures.ThreadPoolExecutor(os.cpu_count()) as executor:
-            task.append(executor.submit(self.get_summary_handler, data=page_wise_text))
-            task.append(executor.submit(self.get_entities_handler, data=page_wise_text))
-            task.append(executor.submit(self.get_encounters_handler, data=document))
-            task.append(executor.submit(self.get_patient_information_handler, data=page_wise_text))
+        tasks = []
+        with futures.ThreadPoolExecutor(2) as executor:
+            tasks.append(executor.submit(self.get_summary_handler, data=page_wise_text))
+            tasks.append(executor.submit(self.get_entities_handler, data=page_wise_text))
+            tasks.append(executor.submit(self.get_encounters_handler, data=page_wise_text, filename=self.document_name))
+            tasks.append(executor.submit(self.get_patient_information_handler, data=page_wise_text))
 
-        extracted_outputs = {'name': os.path.basename(document['name'])}
-        results = futures.wait(task)
+        results = futures.wait(tasks)
+        output = {}
         for x in results.done:
-            extracted_outputs.update(x.result())
-        document_wise_response.append(extracted_outputs)
+            output.update(x.result())
 
-        print(textract_page_wise_text)
+        print(output)
+        return output
