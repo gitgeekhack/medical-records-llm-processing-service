@@ -1,23 +1,21 @@
+import asyncio
+import json
+import multiprocessing
 import os
 import re
-import json
-import asyncio
 import traceback
-import multiprocessing
 from concurrent import futures
 
 from langchain.chains import RetrievalQA
-from langchain_community.vectorstores import FAISS
-from langchain_aws import BedrockLLM
-from langchain.prompts import PromptTemplate
 from langchain.docstore.document import Document
-from langchain_community.embeddings import BedrockEmbeddings
+from langchain.prompts import PromptTemplate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_aws import BedrockLLM
+from langchain_community.embeddings import BedrockEmbeddings
+from langchain_community.vectorstores import FAISS
 
-from app.constant import AWS
 from app.constant import MedicalInsights
 from app.service.nlp_extractor import bedrock_client, get_llm_input_tokens
-
 
 model_id_llm = 'anthropic.claude-instant-v1'
 model_embeddings = 'amazon.titan-embed-text-v1'
@@ -70,7 +68,7 @@ async def get_valid_entity(entities):
 
 async def convert_str_into_json(text):
     """ This method is used to convert str into json object with consistent key-name """
-
+    global logger
     start_index = text.find('{')
     end_index = text.rfind('}') + 1
     json_str = text[start_index:end_index]
@@ -89,7 +87,7 @@ async def convert_str_into_json(text):
         final_data = await get_valid_entity(updated_final_data)
 
     except Exception as e:
-        logger.error('%s -> %s', e, traceback.format_exc())
+        logger.error('%s -> %s' % (e, traceback.format_exc()))
         return final_data
 
     return final_data
@@ -111,8 +109,8 @@ async def get_medical_entities(key, value, page_wise_entities):
 
     docs = await data_formatter(value)
 
-    for i in docs:
-        emb_tokens.append(titan_llm.get_num_tokens(i.page_content))
+    for doc in docs:
+        emb_tokens.append(titan_llm.get_num_tokens(doc.page_content))
 
     if not docs:
         page_wise_entities[key] = {'diagnosis': [], 'treatments': [], 'medications': []}
@@ -173,7 +171,7 @@ async def get_extracted_entities(json_data, logger_instance):
     entity = {}
 
     task = []
-    with futures.ThreadPoolExecutor(os.cpu_count()) as executor:
+    with futures.ThreadPoolExecutor(2) as executor:
         for key, value in json_data.items():
             new_future = executor.submit(extract_entity_handler, key=key,
                                          value=value, page_wise_entities=entity)
@@ -194,11 +192,11 @@ async def get_extracted_entities(json_data, logger_instance):
         page_v |= {"page_no": page_no}
         page_wise_entities.append(page_v)
 
-    logger.info(f'[Medical-Insights][Entity][{model_embeddings}] Input Embedding tokens: {sum(emb_tokens)}')
+    logger.info(f'[Entity][{model_embeddings}] Input Embedding tokens: {sum(emb_tokens)}')
 
-    logger.info(f'[Medical-Insights][Entity][{model_embeddings}] Embedding tokens for LLM call: {sum(emb_prompt_tokens)}')
+    logger.info(f'[Entity][{model_embeddings}] Embedding tokens for LLM call: {sum(emb_prompt_tokens)}')
 
-    logger.info(f'[Medical-Insights][Entity][{model_id_llm}] Input tokens: {sum(input_tokens)} '
+    logger.info(f'[Entity][{model_id_llm}] Input tokens: {sum(input_tokens)} '
                 f'Output tokens: {sum(output_tokens)}')
 
     return {'medical_entities': page_wise_entities}

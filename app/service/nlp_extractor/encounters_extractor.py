@@ -1,28 +1,23 @@
-import os
-import re
 import ast
+import re
 import time
 import traceback
+from datetime import datetime
+from typing import List
 
 import dateparser
-from datetime import datetime
-
 from fuzzywuzzy import fuzz
-
-from typing import List
-from langchain.output_parsers import PydanticOutputParser
-from langchain_core.pydantic_v1 import BaseModel, Field
-from langchain.output_parsers import OutputFixingParser
-
-from langchain_community.vectorstores import FAISS
 from langchain.chains import RetrievalQA
-from langchain_aws import BedrockLLM
-from langchain.prompts import PromptTemplate
 from langchain.docstore.document import Document
-from langchain_community.embeddings import BedrockEmbeddings
+from langchain.output_parsers import OutputFixingParser
+from langchain.output_parsers import PydanticOutputParser
+from langchain.prompts import PromptTemplate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_aws import BedrockLLM
+from langchain_community.embeddings import BedrockEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.pydantic_v1 import BaseModel, Field
 
-from app.constant import AWS
 from app.constant import MedicalInsights
 from app.service.nlp_extractor import bedrock_client, get_llm_input_tokens
 
@@ -236,12 +231,12 @@ class EncountersExtractor:
 
             encounters = []
             for date, event, reference in list_of_tuples:
-                if isinstance(reference, dict):       
+                if isinstance(reference, dict):
                     reference_text = " ".join(reference.values())
                 else:
                     try:
                         reference = ast.literal_eval(reference)
-                        if isinstance(reference, dict):    
+                        if isinstance(reference, dict):
                             reference_text = " ".join(reference.values())
                     except:
                         reference_text = reference
@@ -277,7 +272,7 @@ class EncountersExtractor:
             return encounters
 
         except Exception as e:
-            self.logger.error(f'%s -> %s', e, traceback.format_exc())
+            self.logger.error('%s -> %s' % (e, traceback.format_exc()))
             return []
 
     async def __fallback_post_processing(self, mis_formatted_response):
@@ -291,20 +286,20 @@ class EncountersExtractor:
             return list_of_tuples
 
         except Exception as e:
-            self.logger.error(f'%s -> %s', e, traceback.format_exc())
+            self.logger.error('%s -> %s' % (e, traceback.format_exc()))
             return []
 
     async def get_encounters(self, data, filename):
         """ This method is used to generate the encounters """
-        x = time.time()
+        chunk_start_time = time.time()
         docs, chunk_length, list_of_page_contents = await self.__data_formatter(filename, data)
         stuff_calls = await self.__get_stuff_calls(docs, chunk_length)
         emb_tokens = 0
-        for i in docs:
-            emb_tokens += self.titan_llm.get_num_tokens(i.page_content)
+        for doc in docs:
+            emb_tokens += self.titan_llm.get_num_tokens(doc.page_content)
 
-        z = time.time()
-        self.logger.info(f'[Medical-Insights][Encounter] Chunk Preparation Time: {z - x}')
+        emb_generation_start_time = time.time()
+        self.logger.info(f'[Encounter] Chunk Preparation Time: {emb_generation_start_time - chunk_start_time}')
 
         query = MedicalInsights.Prompts.ENCOUNTER_PROMPT
         prompt_template = MedicalInsights.Prompts.PROMPT_TEMPLATE
@@ -318,12 +313,12 @@ class EncountersExtractor:
                 documents=docs,
                 embedding=self.bedrock_embeddings,
             )
-            y = time.time()
-            self.logger.info(f'[Medical-Insights][Encounter][{self.model_embeddings}] Input Embedding tokens: {emb_tokens} '
-                        f'and Generation time: {y - z}')
+            encounter_start_time = time.time()
+            self.logger.info(f'[Encounter][{self.model_embeddings}] Input Embedding tokens: {emb_tokens} '
+                             f'and Generation time: {encounter_start_time - emb_generation_start_time}')
 
-            self.logger.info(f'[Medical-Insights][Encounter][{self.model_embeddings}] Embedding tokens for LLM call: '
-                        f'{self.titan_llm.get_num_tokens(query) + self.titan_llm.get_num_tokens(prompt_template)}')
+            self.logger.info(f'[Encounter][{self.model_embeddings}] Embedding tokens for LLM call: '
+                             f'{self.titan_llm.get_num_tokens(query) + self.titan_llm.get_num_tokens(prompt_template)}')
 
             qa = RetrievalQA.from_chain_type(
                 llm=self.anthropic_llm,
@@ -342,8 +337,8 @@ class EncountersExtractor:
                 prompt_template)
             output_tokens = self.anthropic_llm.get_num_tokens(response)
 
-            self.logger.info(f'[Medical-Insights][Encounter][{self.model_id_llm}] Input tokens: {input_tokens} '
-                        f'Output tokens: {output_tokens} LLM execution time: {time.time() - y}')
+            self.logger.info(f'[Encounter][{self.model_id_llm}] Input tokens: {input_tokens} '
+                             f'Output tokens: {output_tokens} LLM execution time: {time.time() - encounter_start_time}')
 
             encounters_list = await self.__post_processing(list_of_page_contents, response, relevant_chunks)
             encounters.extend(encounters_list)

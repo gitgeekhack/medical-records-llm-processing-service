@@ -25,18 +25,14 @@ class AWS:
         ROLE_ARN = 'arn:aws:iam::851725323009:role/AmazonTextractServiceRole'
 
 
+class ExceptionMessage:
+    TEXTRACT_FAILED_MESSAGE = 'Text extraction using Textract Async failed'
+
+
 class MedicalInsights:
-    TOTAL_PAGES_THRESHOLD = 1000
     REQUEST_FOLDER_NAME = "request"
     RESPONSE_FOLDER_NAME = "response"
-    EMBEDDING_FOLDER_NAME = "embeddings"
     TEXTRACT_FOLDER_NAME = "textract_response"
-    PREFIX = "s3://ds-medical-insights-extractor/"
-    EMBEDDING_PICKLE_FILE_NAME = "embeddings.pkl"
-    EMBEDDING_FAISS_FILE_NAME = "embeddings.faiss"
-    S3_FOLDER_NAME = 'user-data'
-    LOCAL_FOLDER_NAME = 'static'
-    OUTPUT_FILE_NAME = 'output.json'
 
     class Prompts:
         PROMPT_TEMPLATE = """
