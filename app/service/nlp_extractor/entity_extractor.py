@@ -1,7 +1,5 @@
 import asyncio
 import json
-import multiprocessing
-import os
 import re
 import traceback
 from concurrent import futures
@@ -15,7 +13,7 @@ from langchain_community.embeddings import BedrockEmbeddings
 from langchain_community.vectorstores import FAISS
 
 from app.constant import MedicalInsights
-from app.service.nlp_extractor import bedrock_client, get_llm_input_tokens
+from app.service.nlp_extractor import bedrock_client
 
 model_id_llm = 'anthropic.claude-instant-v1'
 model_embeddings = 'amazon.titan-embed-text-v1'
@@ -34,10 +32,6 @@ anthropic_llm = BedrockLLM(
 titan_llm = BedrockLLM(model_id=model_embeddings, client=bedrock_client)
 bedrock_embeddings = BedrockEmbeddings(model_id=model_embeddings, client=bedrock_client)
 
-emb_tokens = None
-emb_prompt_tokens = None
-input_tokens = None
-output_tokens = None
 logger = None
 
 
@@ -105,12 +99,7 @@ async def data_formatter(json_data):
 async def get_medical_entities(key, value, page_wise_entities):
     """ This method is used to provide medical entities """
 
-    global emb_tokens, emb_prompt_tokens, input_tokens, output_tokens
-
     docs = await data_formatter(value)
-
-    for doc in docs:
-        emb_tokens.append(titan_llm.get_num_tokens(doc.page_content))
 
     if not docs:
         page_wise_entities[key] = {'diagnosis': [], 'treatments': [], 'medications': []}
@@ -123,8 +112,6 @@ async def get_medical_entities(key, value, page_wise_entities):
 
     query = MedicalInsights.Prompts.ENTITY_PROMPT
     prompt_template = MedicalInsights.Prompts.PROMPT_TEMPLATE
-
-    emb_prompt_tokens.append(titan_llm.get_num_tokens(query) + titan_llm.get_num_tokens(prompt_template))
 
     prompt = PromptTemplate(
         template=prompt_template, input_variables=["context", "question"]
@@ -143,9 +130,6 @@ async def get_medical_entities(key, value, page_wise_entities):
     answer = qa.invoke({"query": query})
     response = answer['result']
 
-    input_tokens.append(get_llm_input_tokens(anthropic_llm, answer) + anthropic_llm.get_num_tokens(prompt_template))
-    output_tokens.append(anthropic_llm.get_num_tokens(response))
-
     entities = await convert_str_into_json(response)
     page_wise_entities[key] = entities
     return page_wise_entities
@@ -160,13 +144,8 @@ def extract_entity_handler(key, value, page_wise_entities):
 async def get_extracted_entities(json_data, logger_instance):
     """ This method is used to provide medical entities from document"""
 
-    global emb_tokens, emb_prompt_tokens, input_tokens, output_tokens, logger
+    global logger
     logger = logger_instance
-    manager = multiprocessing.Manager()
-    emb_tokens = manager.list()
-    emb_prompt_tokens = manager.list()
-    input_tokens = manager.list()
-    output_tokens = manager.list()
 
     entity = {}
 
@@ -191,12 +170,5 @@ async def get_extracted_entities(json_data, logger_instance):
         page_no = int(page_k.split("_")[1])
         page_v |= {"page_no": page_no}
         page_wise_entities.append(page_v)
-
-    logger.info(f'[Entity][{model_embeddings}] Input Embedding tokens: {sum(emb_tokens)}')
-
-    logger.info(f'[Entity][{model_embeddings}] Embedding tokens for LLM call: {sum(emb_prompt_tokens)}')
-
-    logger.info(f'[Entity][{model_id_llm}] Input tokens: {sum(input_tokens)} '
-                f'Output tokens: {sum(output_tokens)}')
 
     return {'medical_entities': page_wise_entities}

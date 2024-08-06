@@ -19,7 +19,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.pydantic_v1 import BaseModel, Field
 
 from app.constant import MedicalInsights
-from app.service.nlp_extractor import bedrock_client, get_llm_input_tokens
+from app.service.nlp_extractor import bedrock_client
 
 
 class Encounter(BaseModel):
@@ -294,9 +294,6 @@ class EncountersExtractor:
         chunk_start_time = time.time()
         docs, chunk_length, list_of_page_contents = await self.__data_formatter(filename, data)
         stuff_calls = await self.__get_stuff_calls(docs, chunk_length)
-        emb_tokens = 0
-        for doc in docs:
-            emb_tokens += self.titan_llm.get_num_tokens(doc.page_content)
 
         emb_generation_start_time = time.time()
         self.logger.info(f'[Encounter] Chunk Preparation Time: {emb_generation_start_time - chunk_start_time}')
@@ -314,11 +311,8 @@ class EncountersExtractor:
                 embedding=self.bedrock_embeddings,
             )
             encounter_start_time = time.time()
-            self.logger.info(f'[Encounter][{self.model_embeddings}] Input Embedding tokens: {emb_tokens} '
-                             f'and Generation time: {encounter_start_time - emb_generation_start_time}')
-
-            self.logger.info(f'[Encounter][{self.model_embeddings}] Embedding tokens for LLM call: '
-                             f'{self.titan_llm.get_num_tokens(query) + self.titan_llm.get_num_tokens(prompt_template)}')
+            self.logger.info(f'[Encounter][{self.model_embeddings}] Embeddings generation time: '
+                             f'{encounter_start_time - emb_generation_start_time}')
 
             qa = RetrievalQA.from_chain_type(
                 llm=self.anthropic_llm,
@@ -333,12 +327,9 @@ class EncountersExtractor:
             answer = qa.invoke({"query": query})
             response = answer['result']
             relevant_chunks = answer['source_documents']
-            input_tokens = get_llm_input_tokens(self.anthropic_llm, answer) + self.anthropic_llm.get_num_tokens(
-                prompt_template)
-            output_tokens = self.anthropic_llm.get_num_tokens(response)
 
-            self.logger.info(f'[Encounter][{self.model_id_llm}] Input tokens: {input_tokens} '
-                             f'Output tokens: {output_tokens} LLM execution time: {time.time() - encounter_start_time}')
+            self.logger.info(
+                f'[Encounter][{self.model_id_llm}] LLM execution time: {time.time() - encounter_start_time}')
 
             encounters_list = await self.__post_processing(list_of_page_contents, response, relevant_chunks)
             encounters.extend(encounters_list)

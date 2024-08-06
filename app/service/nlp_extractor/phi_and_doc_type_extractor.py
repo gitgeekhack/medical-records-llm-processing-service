@@ -13,7 +13,7 @@ from langchain_community.embeddings import BedrockEmbeddings
 from langchain_community.vectorstores import FAISS
 
 from app.constant import MedicalInsights
-from app.service.nlp_extractor import bedrock_client, get_llm_input_tokens
+from app.service.nlp_extractor import bedrock_client
 
 
 class PHIAndDocTypeExtractor:
@@ -44,10 +44,6 @@ class PHIAndDocTypeExtractor:
         chunk_start_time = time.time()
         docs = await self.__data_formatter(data)
 
-        emb_tokens = 0
-        for doc in docs:
-            emb_tokens += self.titan_llm.get_num_tokens(doc.page_content)
-
         emb_start_time = time.time()
         self.logger.info(f'[PHI-Embeddings] Chunk Preparation Time: {emb_start_time - chunk_start_time}')
 
@@ -55,8 +51,8 @@ class PHIAndDocTypeExtractor:
             documents=docs,
             embedding=self.bedrock_embeddings,
         )
-        self.logger.info(f'[PHI-Embeddings][{self.model_embeddings}] Input embedding tokens: {emb_tokens}'
-                         f'and Generation time: {time.time() - emb_start_time}')
+        self.logger.info(f'[PHI-Embeddings][{self.model_embeddings}]'
+                         f' Embeddings generation time: {time.time() - emb_start_time}')
 
         return vector_embeddings
 
@@ -143,9 +139,6 @@ class PHIAndDocTypeExtractor:
         doc_type_query = MedicalInsights.Prompts.DOC_TYPE_PROMPT
         prompt_template = MedicalInsights.Prompts.PROMPT_TEMPLATE
 
-        self.logger.info(f'[PHI-DocumentType][{self.model_embeddings}] Embedding tokens for LLM call: '
-                         f'{self.titan_llm.get_num_tokens(doc_type_query) + self.titan_llm.get_num_tokens(prompt_template)}')
-
         prompt = PromptTemplate(
             template=prompt_template, input_variables=["context", "question"]
         )
@@ -161,13 +154,6 @@ class PHIAndDocTypeExtractor:
         )
 
         answer = qa.invoke({"query": doc_type_query})
-
-        input_tokens = get_llm_input_tokens(self.anthropic_llm, answer) + self.anthropic_llm.get_num_tokens(
-            prompt_template)
-        output_tokens = self.anthropic_llm.get_num_tokens(answer['result'])
-
-        self.logger.info(f'[PHI-DocumentType][{self.model_id_llm}] Input tokens: {input_tokens} '
-                         f'Output tokens: {output_tokens}')
 
         response = json.loads(answer['result'])
         doc_type_value = response['document_type']
@@ -189,9 +175,6 @@ class PHIAndDocTypeExtractor:
         query = MedicalInsights.Prompts.PHI_PROMPT
         prompt_template = MedicalInsights.Prompts.PROMPT_TEMPLATE
 
-        self.logger.info(f'[PHI-Dates][{self.model_embeddings}] Embedding tokens for LLM call: '
-                         f'{self.titan_llm.get_num_tokens(query) + self.titan_llm.get_num_tokens(prompt_template)}')
-
         prompt = PromptTemplate(
             template=prompt_template, input_variables=["context", "question"]
         )
@@ -208,13 +191,6 @@ class PHIAndDocTypeExtractor:
 
         answer = qa.invoke({"query": query})
         response = answer['result']
-
-        input_tokens = get_llm_input_tokens(self.anthropic_llm, answer) + self.anthropic_llm.get_num_tokens(
-            prompt_template)
-        output_tokens = self.anthropic_llm.get_num_tokens(response)
-
-        self.logger.info(f'[PHI-Dates][{self.model_id_llm}] Input tokens: {input_tokens} '
-                         f'Output tokens: {output_tokens}')
 
         matches = await self.__extract_values_between_curly_braces(response)
         json_result = json.loads(matches[0])
@@ -237,9 +213,6 @@ class PHIAndDocTypeExtractor:
         query = MedicalInsights.Prompts.PATIENT_INFO_PROMPT
         prompt_template = MedicalInsights.Prompts.PROMPT_TEMPLATE
 
-        self.logger.info(f'[PHI-Name&DOB][{self.model_embeddings}] Embedding tokens for LLM call: '
-                         f'{self.titan_llm.get_num_tokens(query) + self.titan_llm.get_num_tokens(prompt_template)}')
-
         prompt = PromptTemplate(
             template=prompt_template, input_variables=["context", "question"]
         )
@@ -255,13 +228,6 @@ class PHIAndDocTypeExtractor:
         )
 
         answer = qa.invoke({"query": query})
-
-        input_tokens = get_llm_input_tokens(self.anthropic_llm, answer) + self.anthropic_llm.get_num_tokens(
-            prompt_template)
-        output_tokens = self.anthropic_llm.get_num_tokens(answer['result'])
-
-        self.logger.info(f'[PHI-Name&DOB][{self.model_id_llm}] Input tokens: {input_tokens} '
-                         f'Output tokens: {output_tokens}')
 
         processed_result = await self.__process_patient_name_and_dob(answer['result'])
         return processed_result
