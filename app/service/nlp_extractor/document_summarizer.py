@@ -4,7 +4,7 @@ from fuzzywuzzy import fuzz
 from langchain.chains.question_answering import load_qa_chain
 from langchain.docstore.document import Document
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_aws import BedrockLLM
+from langchain_aws import ChatBedrock
 
 from app.constant import MedicalInsights
 from app.service.nlp_extractor import bedrock_client
@@ -14,20 +14,20 @@ class DocumentSummarizer:
     def __init__(self, logger):
         self.logger = logger
         self.bedrock_client = bedrock_client
-        self.model_id_llm = 'anthropic.claude-v2'
+        self.model_id_llm = 'anthropic.claude-3-haiku-20240307-v1:0'
 
-        self.anthropic_llm = BedrockLLM(
+        self.anthropic_llm = ChatBedrock(
             model_id=self.model_id_llm,
             model_kwargs={
-                "max_tokens_to_sample": 10000,
+                "max_tokens": 4096,
                 "temperature": 0.5,
                 "top_p": 0.9,
-                "top_k": 250,
+                "top_k": 500,
                 "stop_sequences": [],
             },
             client=self.bedrock_client,
         )
-        self.reference_summary_first_lines = MedicalInsights.LineRemove.SUMMARY_FIRST_LINE_REMOVE
+        self.reference_summary_first_last_line = MedicalInsights.LineRemove.SUMMARY_FIRST_LAST_LINE_REMOVE
         self.matching_threshold = 60
 
     async def __generate_summary(self, docs, query):
@@ -48,11 +48,16 @@ class DocumentSummarizer:
         docs = [Document(page_content=t) for t in texts]
         return docs, chunk_length
 
-    async def __is_summary_line_similar(self, generated_summary_first_line):
-        for reference_line in self.reference_summary_first_lines:
-            if fuzz.token_sort_ratio(reference_line, generated_summary_first_line) > self.matching_threshold:
-                return True
-        return False
+    async def __first_line_remove(self, line, examples):
+        words = line.split()
+        start_of_first_line = ' '.join(words[:4])
+        return any(
+            fuzz.token_sort_ratio(start_of_first_line, example) > self.matching_threshold for example in examples)
+
+    async def __last_line_remove(self, line, examples):
+        words = line.split()
+        start_of_last_line = ' '.join(words[:4])
+        return any(fuzz.token_sort_ratio(start_of_last_line, example) > self.matching_threshold for example in examples)
 
     async def __get_stuff_calls(self, docs, chunk_length):
         stuff_calls = []
@@ -82,8 +87,10 @@ class DocumentSummarizer:
         text = summary.replace('- ', '')
         text = text.strip()
         lines = text.split('\n')
-        if await self.__is_summary_line_similar(lines[0]):
+        if await self.__first_line_remove(lines[0], self.reference_summary_first_last_line):
             lines = lines[1:]
+        if await self.__last_line_remove(lines[-1], self.reference_summary_first_last_line):
+            lines = lines[:-1]
 
         if lines[-1].__contains__('?'):
             lines = lines[:-1]
@@ -91,16 +98,15 @@ class DocumentSummarizer:
         modified_text = '\n'.join(lines)
         return modified_text.strip()
 
-    async def get_summary(self, json_data):
+    async def get_summary(self, page_wise_text):
         """ This method is used to get the summary of document """
 
+        json_data = page_wise_text
         raw_text = "".join(json_data.values()).strip()
         if not raw_text:
             return {"summary": MedicalInsights.TemplateResponse.SUMMARY_RESPONSE}
-
         chunk_prepare_start_time = time.time()
         docs, chunk_length = await self.__data_formatter(json_data)
-
         self.logger.info(f'[Summary] Chunk Preparation Time: {time.time() - chunk_prepare_start_time}')
 
         stuff_calls = await self.__get_stuff_calls(docs, chunk_length)
@@ -109,20 +115,18 @@ class DocumentSummarizer:
         concatenate_query = MedicalInsights.Prompts.CONCATENATE_SUMMARY
 
         summary_start_time = time.time()
+        summary = []
 
-        if len(stuff_calls) <= 1:
+        if len(stuff_calls) == 1:
             if stuff_calls:
                 docs = stuff_calls[0]
                 summary = await self.__generate_summary(docs, query)
-                self.logger.info(
-                    f'[Summary][{self.model_id_llm}] LLM execution time: {time.time() - summary_start_time}')
         else:
             response_summary = [await self.__generate_summary(docs, query) for docs in stuff_calls]
             final_response_summary = [Document(page_content=response) for response in response_summary]
             summary = await self.__generate_summary(final_response_summary, concatenate_query)
 
-            self.logger.info(f'[Summary][{self.model_id_llm}] LLM execution time: {time.time() - summary_start_time}')
+        self.logger.info(f'[Summary] LLM execution time: {time.time() - summary_start_time}')
 
-        final_summary = await self.__post_processing(summary)
-
-        return {"summary": final_summary}
+        summary = await self.__post_processing(summary)
+        return {"summary": summary}

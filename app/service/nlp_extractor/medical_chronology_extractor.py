@@ -20,15 +20,19 @@ from langchain_core.pydantic_v1 import BaseModel, Field
 
 from app.constant import MedicalInsights
 from app.service.nlp_extractor import bedrock_client
+from app.business_rule_exception import MissingResponseListException
 
 
-class Encounter(BaseModel):
+
+class MedicalChronologyFormat(BaseModel):
     encounter_dates: List[str] = Field(description="Date of the encounter")
     events: List[str] = Field(description="Description of the encounter")
-    references: List[dict] = Field(description="Reference from the actual text")
+    doctors: List[str] = Field(description="Doctor relevant to the encounter")
+    institutions: List[str] = Field(description="Institution relevant to the doctor")
+    references: List[str] = Field(description="Reference from the actual text")
 
 
-class EncountersExtractor:
+class MedicalChronologyExtractor:
     def __init__(self, logger):
         self.logger = logger
         self.bedrock_client = bedrock_client
@@ -145,18 +149,21 @@ class EncountersExtractor:
 
     async def __get_page_number(self, reference_text, list_of_page_contents, relevant_chunks):
         most_similar_chunk = None
-        for chunk in relevant_chunks:
-            if reference_text.lower() in chunk.page_content.lower():
-                most_similar_chunk = chunk
-                break
-        if most_similar_chunk is None:
-            text_matching_ratios = []
+        if len(relevant_chunks) == 1:
+            most_similar_chunk = relevant_chunks[0]
+        else:
             for chunk in relevant_chunks:
-                text_matching_ratios.append(fuzz.token_set_ratio(reference_text, chunk.page_content))
+                if reference_text.lower() in chunk.page_content.lower():
+                    most_similar_chunk = chunk
+                    break
+            if most_similar_chunk is None:
+                text_matching_ratios = []
+                for chunk in relevant_chunks:
+                    text_matching_ratios.append(fuzz.token_set_ratio(reference_text, chunk.page_content))
 
-            most_similar_chunk_index = text_matching_ratios.index(max(text_matching_ratios))
+                most_similar_chunk_index = text_matching_ratios.index(max(text_matching_ratios))
 
-            most_similar_chunk = relevant_chunks[most_similar_chunk_index]
+                most_similar_chunk = relevant_chunks[most_similar_chunk_index]
 
         filename = most_similar_chunk.metadata['source']
         start_page = most_similar_chunk.metadata['start_page']
@@ -164,18 +171,21 @@ class EncountersExtractor:
         relevant_pages = list_of_page_contents[start_page - 1: end_page]
 
         most_similar_page = None
-        for page in relevant_pages:
-            if reference_text.lower() in page.page_content.lower():
-                most_similar_page = page
-                break
-        if most_similar_page is None:
-            text_matching_ratios = []
+        if len(relevant_pages) == 1:
+            most_similar_page = relevant_pages[0]
+        else:
             for page in relevant_pages:
-                text_matching_ratios.append(fuzz.token_set_ratio(reference_text, page.page_content))
+                if reference_text.lower() in page.page_content.lower():
+                    most_similar_page = page
+                    break
+            if most_similar_page is None:
+                text_matching_ratios = []
+                for page in relevant_pages:
+                    text_matching_ratios.append(fuzz.token_set_ratio(reference_text, page.page_content))
 
-            most_similar_page_index = text_matching_ratios.index(max(text_matching_ratios))
+                most_similar_page_index = text_matching_ratios.index(max(text_matching_ratios))
 
-            most_similar_page = relevant_pages[most_similar_page_index]
+                most_similar_page = relevant_pages[most_similar_page_index]
         page_number = most_similar_page.metadata['page']
 
         return page_number, filename
@@ -211,7 +221,7 @@ class EncountersExtractor:
             # Find the list in the string
             start_index = response.find('[')
             if start_index == -1:
-                raise Exception("Missing Response List Error")
+                raise MissingResponseListException
             end_index = response.rfind(']') + 1
             string_of_tuples = response[start_index:end_index]
 
@@ -220,29 +230,19 @@ class EncountersExtractor:
                 list_of_tuples = ast.literal_eval(string_of_tuples.replace('“', '"').replace('”', '"'))
 
             except Exception:
-                # Use a regular expression to match the dates and events
-                matches = re.findall(r'\((\"[\d\/]+\")\s*,\s*\"([^\"]+)\"\s*,\s*\"([^\"]+)\"', string_of_tuples)
+                # Use a regular expression to match the dates, events, doctors, institutions, and references
+                matches = re.findall(MedicalInsights.RegExpression.DATE_EVENT_DOCTOR_INSTITUTION_REFERENCE,
+                                     string_of_tuples)
 
                 # Convert the matches to a list of tuples
-                list_of_tuples = [(date.strip(), event.strip(), reference.strip()) for date, event, reference in
-                                  matches]
+                list_of_tuples = [(date.strip(), event.strip(), doctor.strip(), institution.strip(), reference.strip())
+                                  for date, event, doctor, institution, reference in matches]
                 if len(list_of_tuples) == 0:
                     list_of_tuples = await self.__fallback_post_processing(response)
 
-            encounters = []
-            for date, event, reference in list_of_tuples:
-                if isinstance(reference, dict):
-                    reference_text = " ".join(reference.values())
-                else:
-                    try:
-                        reference = ast.literal_eval(reference)
-                        if isinstance(reference, dict):
-                            reference_text = " ".join(reference.values())
-                    except:
-                        reference_text = reference
-
+            medical_chronology = []
+            for date, event, doctor, institution, reference in list_of_tuples:
                 ## Post-processing for date
-
                 # Validation of date by checking alphabet is present or not
                 alpha_pattern = r'[a-zA-Z]'
                 is_alpha = True if re.search(alpha_pattern, date) else False
@@ -259,60 +259,81 @@ class EncountersExtractor:
                         year = str(2000 + int(year))
                         date_parts[-1] = year
                     date = '-'.join(date_parts)
-                    date = re.findall(r'(?:\d{1,2}-\d{1,2}-\d{1,4})|(?:\d{1,2}-\d{1,4})|(?:\d{1,4})', date)[0]
+                    date = re.findall(MedicalInsights.RegExpression.DATE, date)[0]
                     input_date_parts = date.split('-')
                     if len(input_date_parts[0]) == 1:
                         input_date_parts[0] = '0' + input_date_parts[0]
                     if len(input_date_parts[1]) == 1:
                         input_date_parts[1] = '0' + input_date_parts[1]
-                    page, filename = await self.__get_page_number(reference_text, list_of_page_contents,
-                                                                  relevant_chunks)
-                    encounters.append({'date': date, 'event': event, 'document_name': filename, 'page_no': page})
+                    page_number, filename = await self.__get_page_number(reference, list_of_page_contents,
+                                                                         relevant_chunks)
+                    medical_chronology.append(
+                        {'date': date, 'event': event, 'doctor_name': doctor, 'hospital_name': institution,
+                         'document_name': filename, 'page_no': page_number})
 
-            return encounters
+            return medical_chronology
 
         except Exception as e:
-            self.logger.error('%s -> %s' % (e, traceback.format_exc()))
+            self.logger.error(f'%s -> %s', e, traceback.format_exc())
             return []
 
     async def __fallback_post_processing(self, mis_formatted_response):
         """ This method is used to post-process the LLM response by using fallback in case the post-processing step fails"""
         try:
-            parser = PydanticOutputParser(pydantic_object=Encounter)
+            parser = PydanticOutputParser(pydantic_object=MedicalChronologyFormat)
             new_parser = OutputFixingParser.from_llm(parser=parser, llm=self.anthropic_llm)
 
             formatted = new_parser.parse(mis_formatted_response)
-            list_of_tuples = zip(formatted.encounter_dates, formatted.events, formatted.references)
+            list_of_tuples = zip(formatted.encounter_dates, formatted.events, formatted.doctors, formatted.institutions,
+                                 formatted.references)
             return list_of_tuples
 
         except Exception as e:
-            self.logger.error('%s -> %s' % (e, traceback.format_exc()))
+            self.logger.error(f'%s -> %s', e, traceback.format_exc())
             return []
 
-    async def get_encounters(self, data, filename):
-        """ This method is used to generate the encounters """
-        chunk_start_time = time.time()
+    def __parse_date(self, date_str):
+        parts = date_str.split('-')
+        if len(parts) == 3:
+            month, day, year = map(int, parts)
+            return year, month, day
+        elif len(parts) == 2:
+            month, year = map(int, parts)
+            day = 1
+            return year, month, day
+        elif len(parts) == 1:
+            year = int(parts[0])
+            month = 1
+            day = 1
+            return year, month, day
+        else:
+            raise ValueError("Invalid date format: {} obtained while parsing the date for sorting".format(date_str))
+
+    async def get_medical_chronology(self, page_wise_text, filename):
+        """ This method is used to generate the medical chronology """
+        data = page_wise_text
+        start_time = time.time()
         docs, chunk_length, list_of_page_contents = await self.__data_formatter(filename, data)
         stuff_calls = await self.__get_stuff_calls(docs, chunk_length)
 
-        emb_generation_start_time = time.time()
-        self.logger.info(f'[Encounter] Chunk Preparation Time: {emb_generation_start_time - chunk_start_time}')
+        chunk_prep_end_time = time.time()
+        self.logger.info(f'[Medical-Chronology] Chunk Preparation Time: {chunk_prep_end_time - start_time}')
 
-        query = MedicalInsights.Prompts.ENCOUNTER_PROMPT
+        query = MedicalInsights.Prompts.MEDICAL_CHRONOLOGY_PROMPT
         prompt_template = MedicalInsights.Prompts.PROMPT_TEMPLATE
         prompt = PromptTemplate(
             template=prompt_template, input_variables=["context", "question"]
         )
 
-        encounters = []
+        medical_chronology = []
         for docs in stuff_calls:
             vectorstore_faiss = FAISS.from_documents(
                 documents=docs,
                 embedding=self.bedrock_embeddings,
             )
-            encounter_start_time = time.time()
-            self.logger.info(f'[Encounter][{self.model_embeddings}] Embeddings generation time: '
-                             f'{encounter_start_time - emb_generation_start_time}')
+            embedding_end_time = time.time()
+            self.logger.info(
+                f'[Medical-Chronology] Embedding Generation time: {embedding_end_time - chunk_prep_end_time}')
 
             qa = RetrievalQA.from_chain_type(
                 llm=self.anthropic_llm,
@@ -328,10 +349,14 @@ class EncountersExtractor:
             response = answer['result']
             relevant_chunks = answer['source_documents']
 
-            self.logger.info(
-                f'[Encounter][{self.model_id_llm}] LLM execution time: {time.time() - encounter_start_time}')
+            self.logger.info(f'[Medical-Chronology] LLM execution time: {time.time() - embedding_end_time}')
 
-            encounters_list = await self.__post_processing(list_of_page_contents, response, relevant_chunks)
-            encounters.extend(encounters_list)
+            medical_chronology_list = await self.__post_processing(list_of_page_contents, response, relevant_chunks)
+            medical_chronology.extend(medical_chronology_list)
 
-        return {'encounters': encounters}
+        try:
+            medical_chronology = sorted(medical_chronology, key=lambda e: self.__parse_date(e['date']))
+        except ValueError as ve:
+            self.logger.error(f'%s -> %s', ve, traceback.format_exc())
+
+        return {'medical_chronology': medical_chronology}

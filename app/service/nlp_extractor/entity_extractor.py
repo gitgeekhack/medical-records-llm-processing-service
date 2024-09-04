@@ -3,25 +3,26 @@ import json
 import re
 import traceback
 from concurrent import futures
+import dateparser
+import pytz
+from datetime import datetime
 
-from langchain.chains import RetrievalQA
+from langchain.chains.question_answering import load_qa_chain
 from langchain.docstore.document import Document
-from langchain.prompts import PromptTemplate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_aws import BedrockLLM
+from langchain_aws import ChatBedrock
 from langchain_community.embeddings import BedrockEmbeddings
-from langchain_community.vectorstores import FAISS
 
 from app.constant import MedicalInsights
 from app.service.nlp_extractor import bedrock_client
 
-model_id_llm = 'anthropic.claude-instant-v1'
+model_id_llm = 'anthropic.claude-3-sonnet-20240229-v1:0'
 model_embeddings = 'amazon.titan-embed-text-v1'
 
-anthropic_llm = BedrockLLM(
+anthropic_llm = ChatBedrock(
     model_id=model_id_llm,
     model_kwargs={
-        "max_tokens_to_sample": 10000,
+        "max_tokens": 10000,
         "temperature": 0.0,
         "top_p": 1,
         "top_k": 250
@@ -29,7 +30,7 @@ anthropic_llm = BedrockLLM(
     client=bedrock_client,
 )
 
-titan_llm = BedrockLLM(model_id=model_embeddings, client=bedrock_client)
+titan_llm = ChatBedrock(model_id=model_embeddings, client=bedrock_client)
 bedrock_embeddings = BedrockEmbeddings(model_id=model_embeddings, client=bedrock_client)
 
 logger = None
@@ -45,43 +46,91 @@ async def is_alpha(entity):
     else:
         return False
 
+async def parse_date(date):
+    """ This method is used to parse the date in the datetime format """
 
-async def get_valid_entity(entities):
-    """ This method is used to validate entity by checking if alphabetic character is present or not """
+    date = dateparser.parse(date, settings={'RELATIVE_BASE': datetime(1800, 1, 1)})
+    if date:
+        date = date.replace(tzinfo=pytz.UTC)
+        return date.strftime('%m-%d-%Y')
+    return None
 
-    valid_entities = {key: [] for key in entities}
+async def get_valid_entity(entities, page_number):
+    """ This method is used to validate entities by checking if alphabetic character is present or not """
 
-    for key, entity_list in entities.items():
-        for entity in entity_list:
-            processed_entity = await is_alpha(entity)
-            if processed_entity and entity.strip():
-                x = entity[0].upper() + entity[1:]
-                valid_entities[key].append(x)
+    valid_entities = {
+        "diagnosis": {"allergies": [], "pmh": [], "others": []},
+        "treatments": {"pmh": [], "others": []},
+        "tests": [],
+        "medications": {"pmh": [], "others": []},
+        "page_no": page_number
+    }
+
+    async def validate_entity_field(entity):
+        """ Validates if alphabetic character is present or not """
+
+        processed_entity = await is_alpha(entity)
+        if processed_entity and entity.strip():
+            return entity[0].upper() + entity[1:]
+        else:
+            return ""
+
+    for category, subcategories in entities.items():
+        if category == "medications":
+            for subcategory, entity_list in subcategories.items():
+                for index, entity in enumerate(entity_list):
+                    valid_name = await validate_entity_field(entity.get("name", None))
+                    valid_dosage = await validate_entity_field(entity.get("dosage", None))
+                    if valid_name:
+                        entity['name'] = valid_name
+                        if valid_dosage:
+                            entity['dosage'] = valid_dosage
+                        valid_entities[category][subcategory].append(entity)
+
+        elif category == "tests":
+            for entity_dic in subcategories:
+                valid_name = await validate_entity_field(entity_dic.get("name", None))
+                valid_date = await parse_date(entity_dic.get("date", None))
+                if valid_name:
+                    entity_dic['name'] = valid_name
+                    if valid_date:
+                        entity_dic['date'] = valid_date
+                    valid_entities[category].append(entity_dic)
+
+        elif category in ['diagnosis', 'treatments']:
+            for subcategory, entity_list in subcategories.items():
+                for index, entity in enumerate(entity_list):
+                    valid_entity = await validate_entity_field(entity)
+                    if valid_entity:
+                        valid_entities[category][subcategory].append(valid_entity)
+
     return valid_entities
 
 
-async def convert_str_into_json(text):
+async def convert_str_into_json(text, page_number):
     """ This method is used to convert str into json object with consistent key-name """
-    global logger
+
     start_index = text.find('{')
     end_index = text.rfind('}') + 1
     json_str = text[start_index:end_index]
-    final_data = {'diagnosis': [], 'treatments': [], 'medications': []}
+
+    final_data = {
+        "diagnosis": {"allergies": [], "pmh": [], "others": []},
+        "treatments": {"pmh": [], "others": []},
+        "tests": [],
+        "medications": {"pmh": [], "others": []},
+        "page_no": page_number
+    }
 
     if not json_str or not eval(json_str):
         return final_data
 
     try:
         data = json.loads(json_str)
-        data_keys = ['diagnosis', 'treatments', 'medications']
-        updated_final_data = dict(zip(data_keys, list(data.values())))
-        for key in data_keys:
-            if key not in updated_final_data.keys():
-                updated_final_data[key] = []
-        final_data = await get_valid_entity(updated_final_data)
+        final_data = await get_valid_entity(data, page_number)
 
     except Exception as e:
-        logger.error('%s -> %s' % (e, traceback.format_exc()))
+        logger.error('%s -> %s', e, traceback.format_exc())
         return final_data
 
     return final_data
@@ -89,86 +138,85 @@ async def convert_str_into_json(text):
 
 async def data_formatter(json_data):
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1100, chunk_overlap=200
+        chunk_size=10000, chunk_overlap=200
     )
     texts = text_splitter.split_text(json_data)
     docs = [Document(page_content=t) for t in texts]
+
     return docs
 
+async def get_page_number(key):
+    pattern = r'page_(\d+)'
 
-async def get_medical_entities(key, value, page_wise_entities):
+    match = re.search(pattern, key)
+
+    if match:
+        page_number = int(match.group(1))
+    else:
+        page_number = 1
+
+    return page_number
+
+async def get_medical_entities(key, value):
     """ This method is used to provide medical entities """
 
     docs = await data_formatter(value)
 
+    page_number = await get_page_number(key)
+
     if not docs:
-        page_wise_entities[key] = {'diagnosis': [], 'treatments': [], 'medications': []}
-        return page_wise_entities
+        return {
+            "diagnosis": {"allergies": [], "pmh": [], "others": []},
+            "treatments": {"pmh": [], "others": []},
+            "tests": [],
+            "medications": {"pmh": [], "others": []},
+            "page_no": page_number
+        }
 
-    vectorstore_faiss = FAISS.from_documents(
-        documents=docs,
-        embedding=bedrock_embeddings,
-    )
+    diagnosis_treatment_query = MedicalInsights.Prompts.DIAGNOSIS_TREATMENT_ENTITY_PROMPT
+    tests_medication_query = MedicalInsights.Prompts.TESTS_MEDICATION_ENTITY_PROMPT
 
-    query = MedicalInsights.Prompts.ENTITY_PROMPT
-    prompt_template = MedicalInsights.Prompts.PROMPT_TEMPLATE
+    chain_qa = load_qa_chain(anthropic_llm, chain_type="stuff")
+    diagnosis_treatment_result = chain_qa.invoke(input={"input_documents": docs, "question": diagnosis_treatment_query})
+    tests_medication_result = chain_qa.invoke(input={"input_documents": docs, "question": tests_medication_query})
 
-    prompt = PromptTemplate(
-        template=prompt_template, input_variables=["context", "question"]
-    )
+    page_entities = await convert_str_into_json(diagnosis_treatment_result['output_text'], page_number)
+    tests_medication_entities = await convert_str_into_json(tests_medication_result['output_text'], page_number)
+    page_entities['tests'] = tests_medication_entities['tests']
+    page_entities['medications'] = tests_medication_entities['medications']
 
-    qa = RetrievalQA.from_chain_type(
-        llm=anthropic_llm,
-        chain_type="stuff",
-        retriever=vectorstore_faiss.as_retriever(
-            search_type="similarity", search_kwargs={"k": 6}
-        ),
-        return_source_documents=True,
-        chain_type_kwargs={"prompt": prompt}
-    )
-
-    answer = qa.invoke({"query": query})
-    response = answer['result']
-
-    entities = await convert_str_into_json(response)
-    page_wise_entities[key] = entities
-    return page_wise_entities
+    page_entities['page_no'] = page_number
+    return page_entities
 
 
-def extract_entity_handler(key, value, page_wise_entities):
+def extract_entity_handler(key, value):
     _loop = asyncio.new_event_loop()
-    x = _loop.run_until_complete(get_medical_entities(key, value, page_wise_entities))
+    x = _loop.run_until_complete(get_medical_entities(key, value))
     return x
 
-
-async def get_extracted_entities(json_data, logger_instance):
+async def get_extracted_entities(page_wise_text, logger_instance):
     """ This method is used to provide medical entities from document"""
 
     global logger
     logger = logger_instance
 
-    entity = {}
+    json_data = page_wise_text
 
     task = []
     with futures.ThreadPoolExecutor(2) as executor:
         for key, value in json_data.items():
-            new_future = executor.submit(extract_entity_handler, key=key,
-                                         value=value, page_wise_entities=entity)
+            new_future = executor.submit(extract_entity_handler, key=key, value=value)
             task.append(new_future)
 
     results = futures.wait(task)
 
-    page_wise_entities = {}
-    for entity in results.done:
-        page_wise_entities.update(entity.result())
-
-    filter_empty_pages = {key: value for key, value in page_wise_entities.items() if
-                          any(value[key] for key in ['diagnosis', 'treatments', 'medications'])}
-    sorted_filtered = dict(sorted(filter_empty_pages.items(), key=lambda item: int(item[0].split('_')[1])))
     page_wise_entities = []
-    for page_k, page_v in sorted_filtered.items():
-        page_no = int(page_k.split("_")[1])
-        page_v |= {"page_no": page_no}
-        page_wise_entities.append(page_v)
+    for entity in results.done:
+        page_wise_entities.append(entity.result())
 
-    return {'medical_entities': page_wise_entities}
+    filtered_empty_pages = [page for page in page_wise_entities if
+                            any(any(sub_dict.values()) for sub_dict in page.values() if isinstance(sub_dict, dict))]
+
+    sorted_page_wise_entities = sorted(filtered_empty_pages, key=lambda k: k['page_no'])
+
+    return {'medical_entities': sorted_page_wise_entities}
