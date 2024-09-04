@@ -12,9 +12,11 @@ from app.common.sqs_helper import SQSHelper
 from app.constant import AWS, MedicalInsights
 from app.service.helper.textract_helper import TextractHelper
 from app.service.nlp_extractor.document_summarizer import DocumentSummarizer
-from app.service.nlp_extractor.encounters_extractor import EncountersExtractor
+from app.service.nlp_extractor.medical_chronology_extractor import MedicalChronologyExtractor
 from app.service.nlp_extractor.entity_extractor import get_extracted_entities
-from app.service.nlp_extractor.phi_and_doc_type_extractor import PHIAndDocTypeExtractor
+from app.service.nlp_extractor.patient_demographics_extractor import PatientDemographicsExtractor
+from app.service.nlp_extractor.doc_type_extractor import DocTypeExtractor
+from app.service.nlp_extractor.history_extractor import  HistoryExtractor
 
 logging.getLogger("faiss").setLevel(logging.WARNING)
 
@@ -57,35 +59,65 @@ class LLMProcessing:
         x = _loop.run_until_complete(self.get_entities(data))
         return x
 
-    async def get_patient_information(self, data):
-        """ This method is used to get phi dates from document """
+    async def get_patient_demographics(self, data):
+        """ This method is used to get patient demographics from document """
 
-        start_time = time.time()
-        self.logger.info("Extraction of PHI and Document Type is started...")
-        phi_and_doc_type_extractor = PHIAndDocTypeExtractor(self.logger)
-        patient_information = await phi_and_doc_type_extractor.get_patient_information(data)
-        self.logger.info(
-            f"Extraction of PHI and Document Type is completed in {time.time() - start_time} seconds.")
-        return patient_information
+        x = time.time()
+        self.logger.info("Patient Demographics Extraction is started...")
+        demographics_extractor = PatientDemographicsExtractor(self.logger)
+        patient_demographics = await demographics_extractor.get_patient_demographics(data)
+        self.logger.info(f"Patient Demographics Extraction is completed in {time.time() - x} seconds.")
+        return patient_demographics
 
-    def get_patient_information_handler(self, data):
+    def get_patient_demographics_handler(self, data):
         _loop = asyncio.new_event_loop()
-        x = _loop.run_until_complete(self.get_patient_information(data))
+        x = _loop.run_until_complete(self.get_patient_demographics(data))
         return x
 
-    async def get_encounters(self, data, filename):
-        """ This method is used to get phi dates from document """
+    async def get_document_type(self, data):
+        """ This method is used to get document type from document """
+
+        x = time.time()
+        self.logger.info("Document Type Extraction is started...")
+        doc_type_extractor = DocTypeExtractor(self.logger)
+        doc_type = await doc_type_extractor.extract_document_type(data)
+        self.logger.info(f"Document Type Extraction is completed in {time.time() - x} seconds.")
+        return doc_type
+
+    def get_document_type_handler(self, data):
+        _loop = asyncio.new_event_loop()
+        x = _loop.run_until_complete(self.get_document_type(data))
+        return x
+
+    async def get_chronology(self, data, filename):
+        """ This method is used to get medical chronology from document """
 
         start_time = time.time()
-        self.logger.info("Encounters Extraction is started...")
-        encounters_extractor = EncountersExtractor(self.logger)
-        encounter_events = await encounters_extractor.get_encounters(data, filename)
-        self.logger.info(f"Encounters Extraction is completed in {time.time() - start_time} seconds.")
+        self.logger.info("Medical Chronology Extraction is started...")
+        encounters_extractor = MedicalChronologyExtractor(self.logger)
+        encounter_events = await encounters_extractor.get_medical_chronology(data, filename)
+        self.logger.info(f"Medical Chronology Extraction is completed in {time.time() - start_time} seconds.")
         return encounter_events
 
-    def get_encounters_handler(self, data, filename):
+    def get_chronology_handler(self, data, filename):
         _loop = asyncio.new_event_loop()
-        x = _loop.run_until_complete(self.get_encounters(data, filename))
+        x = _loop.run_until_complete(self.get_chronology(data, filename))
+        return x
+
+    async def get_history(self, data):
+        """ This method is used to get History and Psychiatric Injury from document """
+
+        x = time.time()
+        self.logger.info("History & Psychiatric Injury Extraction is started...")
+        history_extractor = HistoryExtractor(self.logger)
+        history_info = await history_extractor.get_history(data)
+        self.logger.info(
+            f"History & Psychiatric Injury Extraction is completed in {time.time() - x} seconds.")
+        return history_info
+
+    def get_history_handler(self, data):
+        _loop = asyncio.new_event_loop()
+        x = _loop.run_until_complete(self.get_history(data))
         return x
 
     async def process_doc(self, input_message):
@@ -105,13 +137,24 @@ class LLMProcessing:
                 tasks.append(executor.submit(self.get_summary_handler, data=page_wise_text))
                 tasks.append(executor.submit(self.get_entities_handler, data=page_wise_text))
                 tasks.append(
-                    executor.submit(self.get_encounters_handler, data=page_wise_text, filename=self.document_name))
-                tasks.append(executor.submit(self.get_patient_information_handler, data=page_wise_text))
+                    executor.submit(self.get_chronology_handler, data=page_wise_text, filename=self.document_name))
+                tasks.append(executor.submit(self.get_patient_demographics_handler, data=page_wise_text))
+                tasks.append(executor.submit(self.get_history_handler, data=page_wise_text))
+                tasks.append(executor.submit(self.get_document_type_handler, data=page_wise_text))
+
 
             results = futures.wait(tasks)
             output = {}
             for res in results.done:
                 output.update(res.result())
+
+            output['tests'] = []
+            for entity in output['medical_entities']:
+                output['tests'].append({
+                    'page_no': entity['page_no'],
+                    'tests': entity.pop('tests')
+                })
+            output['document_name'] = self.document_name
 
             s3_pdf_folder = os.path.dirname(input_message['DocumentLocation']['S3ObjectName'])
             s3_output_folder = s3_pdf_folder.replace(MedicalInsights.REQUEST_FOLDER_NAME,

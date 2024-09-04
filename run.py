@@ -6,7 +6,7 @@ import traceback
 from app.common.cloudwatch_helper import get_cloudwatch_logger
 from app.common.utils import get_project_id_and_document
 from app.constant import AWS
-from app.service.llm_proessing import LLMProcessing
+from app.service.llm_processing import LLMProcessing
 
 logger = get_cloudwatch_logger(log_stream_name=AWS.CloudWatch.LLM_PROCESSING_STREAM)
 input_message = os.getenv('INPUT_MESSAGE')
