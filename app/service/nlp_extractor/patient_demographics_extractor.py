@@ -183,7 +183,7 @@ class PatientDemographicsExtractor:
 
             t = time.time()
             patient_demographics = await self.__extract_patient_demographics(embeddings)
-            self.logger.info(f'[Demographics][{self.model_id_llm}] LLM execution time: {time.time() - t}')
+            self.logger.info(f'[Demographics] LLM execution time: {time.time() - t}')
 
             return {"patient_demographics": patient_demographics['patient_demographics']}
 
