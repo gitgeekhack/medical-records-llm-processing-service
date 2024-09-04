@@ -60,7 +60,7 @@ def get_cloudwatch_logger(project_id=None, document_name=None, log_stream_name=N
     console_handler.setFormatter(formatter)
 
     cloudwatch_handler.addFilter(PackagePathFilter())
-    # logger.addHandler(cloudwatch_handler)
+    logger.addHandler(cloudwatch_handler)
     logger.addHandler(console_handler)
 
     if project_id and document_name:
