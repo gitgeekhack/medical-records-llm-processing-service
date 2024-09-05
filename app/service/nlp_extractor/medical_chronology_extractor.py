@@ -19,9 +19,8 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.pydantic_v1 import BaseModel, Field
 
 from app.constant import MedicalInsights
-from app.service.nlp_extractor import bedrock_client
+from app.service.nlp_extractor import bedrock_client, get_llm_input_tokens
 from app.business_rule_exception import MissingResponseListException
-
 
 
 class MedicalChronologyFormat(BaseModel):
@@ -316,6 +315,10 @@ class MedicalChronologyExtractor:
         docs, chunk_length, list_of_page_contents = await self.__data_formatter(filename, data)
         stuff_calls = await self.__get_stuff_calls(docs, chunk_length)
 
+        emb_tokens = 0
+        for i in docs:
+            emb_tokens += self.titan_llm.get_num_tokens(i.page_content)
+
         chunk_prep_end_time = time.time()
         self.logger.info(f'[Medical-Chronology] Chunk Preparation Time: {chunk_prep_end_time - start_time}')
 
@@ -332,8 +335,8 @@ class MedicalChronologyExtractor:
                 embedding=self.bedrock_embeddings,
             )
             embedding_end_time = time.time()
-            self.logger.info(
-                f'[Medical-Chronology] Embedding Generation time: {embedding_end_time - chunk_prep_end_time}')
+            self.logger.info(f'[Medical-Chronology][{self.model_embeddings}] Input Embedding tokens: {emb_tokens} '
+                             f'and Generation time: {embedding_end_time - chunk_prep_end_time}')
 
             qa = RetrievalQA.from_chain_type(
                 llm=self.anthropic_llm,
@@ -349,7 +352,13 @@ class MedicalChronologyExtractor:
             response = answer['result']
             relevant_chunks = answer['source_documents']
 
-            self.logger.info(f'[Medical-Chronology] LLM execution time: {time.time() - embedding_end_time}')
+            input_tokens = get_llm_input_tokens(self.anthropic_llm, answer) + self.anthropic_llm.get_num_tokens(
+                prompt_template)
+            output_tokens = self.anthropic_llm.get_num_tokens(response)
+
+            self.logger.info(
+                f'[Medical-Chronology][{self.model_id_llm}] Input tokens: {input_tokens} '
+                f'Output tokens: {output_tokens} LLM execution time: {time.time() - embedding_end_time}')
 
             medical_chronology_list = await self.__post_processing(list_of_page_contents, response, relevant_chunks)
             medical_chronology.extend(medical_chronology_list)

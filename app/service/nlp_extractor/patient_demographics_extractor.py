@@ -13,7 +13,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 
 from app.constant import MedicalInsights
-from app.service.nlp_extractor import bedrock_client
+from app.service.nlp_extractor import bedrock_client, get_llm_input_tokens
 
 
 class PatientDemographicsExtractor:
@@ -104,7 +104,7 @@ class PatientDemographicsExtractor:
         # Calculate BMI if height and weight are provided
         if final_data['height']['value'] and final_data['weight']['value']:
             bmi = round(703 * float(data['weight']['value']) / (
-                        float(data['height']['value']) * float(data['height']['value'])), 2)
+                    float(data['height']['value']) * float(data['height']['value'])), 2)
             final_data['bmi'] = str(bmi)
         else:
             final_data['bmi'] = ""
@@ -119,6 +119,7 @@ class PatientDemographicsExtractor:
         prompt = PromptTemplate(
             template=prompt_template, input_variables=["context", "question"]
         )
+        x = time.time()
         qa = RetrievalQA.from_chain_type(
             llm=self.anthropic_llm,
             chain_type="stuff",
@@ -131,6 +132,14 @@ class PatientDemographicsExtractor:
 
         answer = qa.invoke({"query": query})
         response = answer['result']
+
+        input_tokens = get_llm_input_tokens(self.anthropic_llm, answer) + self.anthropic_llm.get_num_tokens(
+            prompt_template)
+        output_tokens = self.anthropic_llm.get_num_tokens(response)
+
+        self.logger.info(f'[Demographics][{self.model_id_llm}] Input tokens: {input_tokens} '
+                         f'Output tokens: {output_tokens} LLM execution time: {time.time() - x}')
+
         final_response = await self.__process_patient_demographics(response)
         return final_response
 
@@ -159,14 +168,20 @@ class PatientDemographicsExtractor:
         x = time.time()
         docs = await self.__data_formatter(page_wise_text)
 
+        emb_tokens = 0
+        for i in docs:
+            emb_tokens += self.titan_llm.get_num_tokens(i.page_content)
+
         self.logger.info(f'[Demographics] Chunk Preparation Time: {time.time() - x}')
 
+        y = time.time()
         vector_embeddings = FAISS.from_documents(
             documents=docs,
             embedding=self.bedrock_embeddings,
         )
+        self.logger.info(f'[Demographics][{self.model_embeddings}] Input embedding tokens: {emb_tokens} '
+                         f'and Generation time: {time.time() - y}')
         return vector_embeddings
-
 
     async def get_patient_demographics(self, page_wise_text):
         """ This is expose method of the class """
@@ -186,5 +201,3 @@ class PatientDemographicsExtractor:
             self.logger.info(f'[Demographics] LLM execution time: {time.time() - t}')
 
             return {"patient_demographics": patient_demographics['patient_demographics']}
-
-

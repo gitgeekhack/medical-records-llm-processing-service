@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 import traceback
+import multiprocessing
 from concurrent import futures
 import dateparser
 import pytz
@@ -34,6 +35,8 @@ titan_llm = ChatBedrock(model_id=model_embeddings, client=bedrock_client)
 bedrock_embeddings = BedrockEmbeddings(model_id=model_embeddings, client=bedrock_client)
 
 logger = None
+input_tokens = None
+output_tokens = None
 
 
 async def is_alpha(entity):
@@ -46,6 +49,7 @@ async def is_alpha(entity):
     else:
         return False
 
+
 async def parse_date(date):
     """ This method is used to parse the date in the datetime format """
 
@@ -54,6 +58,7 @@ async def parse_date(date):
         date = date.replace(tzinfo=pytz.UTC)
         return date.strftime('%m-%d-%Y')
     return None
+
 
 async def get_valid_entity(entities, page_number):
     """ This method is used to validate entities by checking if alphabetic character is present or not """
@@ -143,7 +148,9 @@ async def data_formatter(json_data):
     texts = text_splitter.split_text(json_data)
     docs = [Document(page_content=t) for t in texts]
 
-    return docs
+    total_tokens = anthropic_llm.get_num_tokens(json_data)
+    return docs, total_tokens
+
 
 async def get_page_number(key):
     pattern = r'page_(\d+)'
@@ -157,10 +164,13 @@ async def get_page_number(key):
 
     return page_number
 
+
 async def get_medical_entities(key, value):
     """ This method is used to provide medical entities """
 
-    docs = await data_formatter(value)
+    global input_tokens, output_tokens
+
+    docs, total_tokens = await data_formatter(value)
 
     page_number = await get_page_number(key)
 
@@ -180,6 +190,14 @@ async def get_medical_entities(key, value):
     diagnosis_treatment_result = chain_qa.invoke(input={"input_documents": docs, "question": diagnosis_treatment_query})
     tests_medication_result = chain_qa.invoke(input={"input_documents": docs, "question": tests_medication_query})
 
+    input_tokens.append(
+        anthropic_llm.get_num_tokens(diagnosis_treatment_result['output_text']) + anthropic_llm.get_num_tokens(
+            tests_medication_result['output_text']) + 2 * total_tokens)
+
+    output_tokens.append(
+        anthropic_llm.get_num_tokens(diagnosis_treatment_result['output_text']) + anthropic_llm.get_num_tokens(
+            tests_medication_result['output_text']))
+
     page_entities = await convert_str_into_json(diagnosis_treatment_result['output_text'], page_number)
     tests_medication_entities = await convert_str_into_json(tests_medication_result['output_text'], page_number)
     page_entities['tests'] = tests_medication_entities['tests']
@@ -194,13 +212,18 @@ def extract_entity_handler(key, value):
     x = _loop.run_until_complete(get_medical_entities(key, value))
     return x
 
+
 async def get_extracted_entities(page_wise_text, logger_instance):
     """ This method is used to provide medical entities from document"""
 
-    global logger
+    global logger, input_tokens, output_tokens
     logger = logger_instance
 
     json_data = page_wise_text
+
+    manager = multiprocessing.Manager()
+    input_tokens = manager.list()
+    output_tokens = manager.list()
 
     task = []
     with futures.ThreadPoolExecutor(2) as executor:
@@ -218,5 +241,8 @@ async def get_extracted_entities(page_wise_text, logger_instance):
                             any(any(sub_dict.values()) for sub_dict in page.values() if isinstance(sub_dict, dict))]
 
     sorted_page_wise_entities = sorted(filtered_empty_pages, key=lambda k: k['page_no'])
+
+    logger.info(f'[Entity-Extraction][{model_id_llm}] Input tokens: {sum(input_tokens)} '
+                f'Output tokens: {sum(output_tokens)}')
 
     return {'medical_entities': sorted_page_wise_entities}

@@ -14,9 +14,7 @@ from langchain_community.embeddings import BedrockEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 from app.constant import MedicalInsights
-from app.service.nlp_extractor import bedrock_client
-
-
+from app.service.nlp_extractor import bedrock_client, get_llm_input_tokens
 
 class HistoryExtractor:
     def __init__(self, logger):
@@ -151,6 +149,7 @@ class HistoryExtractor:
         prompt = PromptTemplate(
             template=prompt_template, input_variables=["context", "question"]
         )
+        llm_start_time = time.time()
         qa = RetrievalQA.from_chain_type(
             llm=self.anthropic_llm,
             chain_type="stuff",
@@ -182,6 +181,13 @@ class HistoryExtractor:
                                                    list_of_page_contents, relevant_chunks)
         output['social_history']['page_no'] = page_social
 
+        input_tokens = get_llm_input_tokens(self.anthropic_llm, answer) + self.anthropic_llm.get_num_tokens(
+            prompt_template)
+        output_tokens = self.anthropic_llm.get_num_tokens(response)
+
+        self.logger.info(f'[History-Extraction][{self.model_id_llm}] Input tokens: {input_tokens} '
+                         f'Output tokens: {output_tokens} LLM execution time: {time.time() - llm_start_time}')
+
         for parent_key in list(output):
             for key in list(output[parent_key]['values']):
                 output[parent_key]['values'][key.lower()] = output[parent_key]['values'].pop(key)
@@ -205,6 +211,7 @@ class HistoryExtractor:
             chain_type_kwargs={"prompt": prompt}
         )
 
+        llm_start_time = time.time()
         answer = qa.invoke({"query": query})
         response = answer['result']
         relevant_chunks = answer['source_documents']
@@ -220,6 +227,13 @@ class HistoryExtractor:
             page_injury = await self.__get_page_number(json.dumps(output['psychiatric_injury']['values']),
                                                        list_of_page_contents, relevant_chunks)
             output['psychiatric_injury']['page_no'] = page_injury
+
+        input_tokens = get_llm_input_tokens(self.anthropic_llm, answer) + self.anthropic_llm.get_num_tokens(
+            prompt_template)
+        output_tokens = self.anthropic_llm.get_num_tokens(response)
+
+        self.logger.info(f'[Psychiatric-Injury][{self.model_id_llm}] Input tokens: {input_tokens} '
+                         f'Output tokens: {output_tokens} LLM execution time: {time.time() - llm_start_time}')
 
         return output
 
@@ -242,22 +256,26 @@ class HistoryExtractor:
                 emb_tokens += self.titan_llm.get_num_tokens(i.page_content)
 
             t2 = time.time()
-            self.logger.info(f'[History] Chunk Preparation Time: {t2 - t1}')
+            self.logger.info(f'[History-Extraction] Chunk Preparation Time: {t2 - t1}')
 
             vectorstore_faiss = FAISS.from_documents(
                 documents=docs,
                 embedding=self.bedrock_embeddings,
             )
-            self.logger.info(f'[History] Embedding Generation time: {time.time() - t2}')
+            self.logger.info(f'[History-Extraction] Embedding Generation time: {time.time() - t2}')
+            self.logger.info(f'[History-Extraction][{self.model_embeddings}] Input Embedding tokens: {emb_tokens} '
+                             f'and Generation time: {time.time() - t2}')
 
             social_history_start_time = time.time()
             history_output = await self.get_social_and_family_history(vectorstore_faiss, list_of_page_contents)
-            self.logger.info(f'[History] Social and Family History Extraction completed in : {time.time() - social_history_start_time} seconds')
+            self.logger.info(
+                f'[History-Extraction] Social and Family History Extraction completed in : {time.time() - social_history_start_time} seconds')
             output.update(history_output)
 
             psychiatric_injury_start_time = time.time()
             injury_output = await self.get_psychiatric_injury(vectorstore_faiss, list_of_page_contents)
-            self.logger.info(f'[History] Psychiatric Injury Extraction completed in : {time.time() - psychiatric_injury_start_time} seconds')
+            self.logger.info(
+                f'[Psychiatric-Injury] Psychiatric Injury Extraction completed in : {time.time() - psychiatric_injury_start_time} seconds')
             output.update(injury_output)
 
             return {"general_history": output}
