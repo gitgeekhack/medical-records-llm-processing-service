@@ -10,7 +10,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 
 from app.constant import MedicalInsights
-from app.service.nlp_extractor import bedrock_client
+from app.service.nlp_extractor import bedrock_client, get_llm_input_tokens
 
 
 class DocTypeExtractor:
@@ -56,6 +56,8 @@ class DocTypeExtractor:
         prompt = PromptTemplate(
             template=prompt_template, input_variables=["context", "question"]
         )
+
+        start_time = time.time()
         qa = RetrievalQA.from_chain_type(
             llm=self.anthropic_llm,
             chain_type="stuff",
@@ -68,6 +70,14 @@ class DocTypeExtractor:
 
         answer = qa.invoke({"query": query})
         response = answer['result']
+
+        input_tokens = get_llm_input_tokens(self.anthropic_llm, answer) + self.anthropic_llm.get_num_tokens(
+            prompt_template)
+        output_tokens = self.anthropic_llm.get_num_tokens(response)
+
+        self.logger.info(f'[Document-Type][{self.model_id_llm}] Input tokens: {input_tokens} '
+                         f'Output tokens: {output_tokens} LLM execution time: {time.time() - start_time}')
+
         final_response = await self.__process_document_type(response)
         return final_response
 
@@ -92,19 +102,24 @@ class DocTypeExtractor:
     async def __get_docs_embeddings(self, page_wise_text):
         """ This method is used to prepare the embeddings and returns it """
 
-        x = time.time()
+        formatter_start_time = time.time()
         docs = await self.__data_formatter(page_wise_text)
 
-        y = time.time()
-        self.logger.info(f'[Document-Type] Chunk Preparation Time: {y - x}')
+        emb_tokens = 0
+        for i in docs:
+            emb_tokens += self.titan_llm.get_num_tokens(i.page_content)
+
+        emb_start_time = time.time()
+        self.logger.info(f'[Document-Type] Chunk Preparation Time: {emb_start_time - formatter_start_time}')
 
         vector_embeddings = FAISS.from_documents(
             documents=docs,
             embedding=self.bedrock_embeddings,
         )
+        self.logger.info(f'[Document-Type][{self.model_embeddings}] Input embedding tokens: {emb_tokens} '
+                         f'and Generation time: {time.time() - emb_start_time}')
 
         return vector_embeddings
-
 
     async def extract_document_type(self, page_wise_text):
         """ This is expose method of the class """
@@ -113,15 +128,7 @@ class DocTypeExtractor:
         if not pdf_text:
             return {"document_type": ""}
         else:
-            emb_start_time = time.time()
             embeddings = await self.__get_docs_embeddings(page_wise_text)
-            self.logger.info(f"[Document-Type] Embedding Generation time: {time.time() - emb_start_time}")
-
-            document_type_start_time = time.time()
             document_type = await self.__classify_document_type(embeddings)
-            self.logger.info(f"[Document-Type] LLM Execution time: {time.time() - document_type_start_time}")
 
             return document_type
-
-
-
