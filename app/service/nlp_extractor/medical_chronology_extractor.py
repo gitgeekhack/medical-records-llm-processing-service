@@ -329,14 +329,17 @@ class MedicalChronologyExtractor:
         )
 
         medical_chronology = []
-        for docs in stuff_calls:
+        embedding_time, llm_time = 0, 0
+        total_inp_tokens, total_out_tokens = 0, 0
+        for i, docs in enumerate(stuff_calls):
+            self.logger.info(f"Processing {i+1}/{len(stuff_calls)} stuff calls...")
+            embedding_start_time = time.time()
             vectorstore_faiss = FAISS.from_documents(
                 documents=docs,
                 embedding=self.bedrock_embeddings,
             )
             embedding_end_time = time.time()
-            self.logger.info(f'[Medical-Chronology][{self.model_embeddings}] Input Embedding tokens: {emb_tokens} '
-                             f'and Generation time: {embedding_end_time - chunk_prep_end_time}')
+            embedding_time += embedding_end_time - embedding_start_time
 
             qa = RetrievalQA.from_chain_type(
                 llm=self.anthropic_llm,
@@ -352,16 +355,22 @@ class MedicalChronologyExtractor:
             response = answer['result']
             relevant_chunks = answer['source_documents']
 
+            llm_time += time.time() - embedding_end_time
             input_tokens = get_llm_input_tokens(self.anthropic_llm, answer) + self.anthropic_llm.get_num_tokens(
                 prompt_template)
+            total_inp_tokens += input_tokens
             output_tokens = self.anthropic_llm.get_num_tokens(response)
-
-            self.logger.info(
-                f'[Medical-Chronology][{self.model_id_llm}] Input tokens: {input_tokens} '
-                f'Output tokens: {output_tokens} LLM execution time: {time.time() - embedding_end_time}')
+            total_out_tokens += output_tokens
 
             medical_chronology_list = await self.__post_processing(list_of_page_contents, response, relevant_chunks)
             medical_chronology.extend(medical_chronology_list)
+
+        self.logger.info(f'[Medical-Chronology][{self.model_embeddings}] Input Embedding tokens: {emb_tokens} '
+                         f'and Generation time: {embedding_time}')
+
+        self.logger.info(
+            f'[Medical-Chronology][{self.model_id_llm}] Input tokens: {total_inp_tokens} '
+            f'Output tokens: {total_out_tokens} LLM execution time: {llm_time}')
 
         try:
             medical_chronology = sorted(medical_chronology, key=lambda e: self.__parse_date(e['date']))
