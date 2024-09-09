@@ -152,9 +152,9 @@ class PatientDemographicsExtractor:
         texts = text_splitter.split_text(raw_text)
         for text in texts:
             threshold = self.anthropic_llm.get_num_tokens(text)
-            if threshold > 7000:
+            if threshold > 5000:
                 text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=15000, chunk_overlap=200
+                    chunk_size=10000, chunk_overlap=200
                 )
                 texts = text_splitter.split_text(raw_text)
                 break
