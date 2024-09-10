@@ -150,10 +150,12 @@ class LLMProcessing:
 
             output['tests'] = []
             for entity in output['medical_entities']:
-                output['tests'].append({
-                    'page_no': entity['page_no'],
-                    'tests': entity.pop('tests')
-                })
+                tests = entity.pop('tests')
+                if tests:
+                    output['tests'].append({
+                        'page_no': entity['page_no'],
+                        'tests': tests
+                    })
             output['document_name'] = self.document_name
 
             s3_pdf_folder = os.path.dirname(input_message['DocumentLocation']['S3ObjectName'])
