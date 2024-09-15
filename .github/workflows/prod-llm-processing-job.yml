@@ -1,0 +1,43 @@
+name: Production-llm-processing-job
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  ECR_REPOSITORY: llm-processing
+  EKS_CLUSTER_NAME: demo-site 
+  AWS_REGION: ap-south-1
+  IMAGE_TAG: latest
+
+jobs:
+  
+  build-service:
+    runs-on: ubuntu-latest
+    steps:
+
+    - name: Set short git commit SHA
+      id: commit
+      uses: prompt/actions-commit-hash@v2
+
+    - name: Check out code
+      uses: actions/checkout@v2
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{env.AWS_REGION}}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Build, tag, and push image to Amazon ECR
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        # IMAGE_TAG: ${{ steps.commit.outputs.short }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f llm_processing.Dockerfile .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
