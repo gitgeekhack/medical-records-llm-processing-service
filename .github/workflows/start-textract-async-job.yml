@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 env:
-  ECR_REPOSITORY: staging/textract-async
+  ECR_REPOSITORY: textract-async
   EKS_CLUSTER_NAME: demo-site 
   AWS_REGION: ap-south-1
   IMAGE_TAG: latest
