@@ -7,5 +7,7 @@ RUN pip install --upgrade pip==24.2
 RUN pip install -r requirements.txt
 COPY ./app ./app
 COPY run.py ./run.py
+COPY ./.env ./.env
 
+CMD ["source", ".env"]
 CMD ["python", "run.py"]
