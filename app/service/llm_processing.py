@@ -174,5 +174,5 @@ class LLMProcessing:
             self.logger.error('%s -> %s' % (e, traceback.format_exc()))
         finally:
             self.logger.info(f'Publishing message: {json.dumps(output_message)} '
-                             f'to Queue: {os.path.basename(AWS.SQS.LLM_OUTPUT_QUEUE)}')
-            await self.sqs_helper.publish_message(AWS.SQS.LLM_OUTPUT_QUEUE, json.dumps(output_message))
+                             f'to Queue: {os.path.basename(AWS.SQS.LLM_OUTPUT_QUEUE_URL)}')
+            await self.sqs_helper.publish_message(AWS.SQS.LLM_OUTPUT_QUEUE_URL, json.dumps(output_message))

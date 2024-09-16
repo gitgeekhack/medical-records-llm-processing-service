@@ -50,5 +50,5 @@ class TextractProcessor:
                 "output_path": None
             }
 
-            await self.sqs_helper.publish_message(AWS.SQS.LLM_OUTPUT_QUEUE, json.dumps(error_message))
-            self.logger.info(f"Published error message to the queue: {AWS.SQS.LLM_OUTPUT_QUEUE.split('/')[-1]}")
+            await self.sqs_helper.publish_message(AWS.SQS.LLM_OUTPUT_QUEUE_URL, json.dumps(error_message))
+            self.logger.info(f"Published error message to the queue: {AWS.SQS.LLM_OUTPUT_QUEUE_URL.split('/')[-1]}")

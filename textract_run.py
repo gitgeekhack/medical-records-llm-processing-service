@@ -14,6 +14,17 @@ if not input_message:
     logger.info('Configuration incomplete. Please configure INPUT_MESSAGE environment variable.')
     exit(0)
 
+if not AWS.SQS.LLM_OUTPUT_QUEUE_URL:
+    logger.info('Configuration incomplete. Please configure LLM_OUTPUT_QUEUE_URL environment variable.')
+    exit(0)
+
+if not AWS.SNS.SNS_TOPIC_ARN:
+    logger.info('Configuration incomplete. Please configure SNS_TOPIC_ARN environment variable.')
+    exit(0)
+
+if not AWS.SNS.ROLE_ARN:
+    logger.info('Configuration incomplete. Please configure ROLE_ARN environment variable.')
+    exit(0)
 
 async def main():
     global logger
