@@ -7,7 +7,5 @@ RUN pip install --upgrade pip==24.2
 RUN pip install -r requirements.txt
 COPY ./app ./app
 COPY textract_run.py ./textract_run.py
-COPY ./.env ./.env
 
-CMD ["source", ".env"]
 CMD ["python", "textract_run.py"]
