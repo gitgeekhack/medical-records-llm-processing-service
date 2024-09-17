@@ -8,7 +8,7 @@ from app.common.cloudwatch_helper import get_cloudwatch_logger
 from app.constant import AWS
 from app.common.utils import get_project_id_and_document
 
-logger = get_cloudwatch_logger()
+logger = get_cloudwatch_logger(log_stream_name=AWS.CloudWatch.START_TEXTRACT_STREAM)
 input_message = os.getenv('INPUT_MESSAGE')
 if not input_message:
     logger.info('Configuration incomplete. Please configure INPUT_MESSAGE environment variable.')
