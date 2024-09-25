@@ -1,10 +1,9 @@
 import asyncio
-import json
 import os
 import traceback
+import json
 
 from app.common.cloudwatch_helper import get_cloudwatch_logger
-from app.common.utils import get_project_id_and_document
 from app.constant import AWS
 from app.service.llm_processing import LLMProcessing
 
@@ -23,11 +22,10 @@ async def main():
     global logger
     try:
         input_message_dict = json.loads(input_message)
-        project_id, document_name = await get_project_id_and_document(
-            input_message_dict['DocumentLocation']['S3ObjectName'])
-        logger = get_cloudwatch_logger(project_id, document_name, AWS.CloudWatch.LLM_PROCESSING_STREAM)
+        document_name = os.path.basename(input_message_dict['document_name'])
+        logger = get_cloudwatch_logger(document_name, AWS.CloudWatch.LLM_PROCESSING_STREAM)
         logger.info(f"Input message: {input_message}")
-        llm_processor = LLMProcessing(logger, project_id, document_name)
+        llm_processor = LLMProcessing(logger, document_name)
         await llm_processor.process_doc(input_message_dict)
     except Exception as e:
         logger.error('%s -> %s' % (e, traceback.format_exc()))
