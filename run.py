@@ -6,6 +6,7 @@ import json
 from app.common.cloudwatch_helper import get_cloudwatch_logger
 from app.constant import AWS
 from app.service.llm_processing import LLMProcessing
+from app.common.utils import get_project_id_and_document
 
 logger = get_cloudwatch_logger(log_stream_name=AWS.CloudWatch.LLM_PROCESSING_STREAM)
 input_message = os.getenv('INPUT_MESSAGE')
@@ -22,10 +23,10 @@ async def main():
     global logger
     try:
         input_message_dict = json.loads(input_message)
-        document_name = os.path.basename(input_message_dict['document_name'])
-        logger = get_cloudwatch_logger(document_name, AWS.CloudWatch.LLM_PROCESSING_STREAM)
+        project_id, document_name = await get_project_id_and_document(input_message_dict['document_path'])
+        logger = get_cloudwatch_logger(project_id, document_name, AWS.CloudWatch.LLM_PROCESSING_STREAM)
         logger.info(f"Input message: {input_message}")
-        llm_processor = LLMProcessing(logger, document_name)
+        llm_processor = LLMProcessing(logger, project_id, document_name)
         await llm_processor.process_doc(input_message_dict)
     except Exception as e:
         logger.error('%s -> %s' % (e, traceback.format_exc()))

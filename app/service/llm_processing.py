@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import shutil
 import os
 import time
@@ -21,9 +22,10 @@ logging.getLogger("faiss").setLevel(logging.WARNING)
 
 
 class LLMProcessing:
-    def __init__(self, logger, document_name):
+    def __init__(self, logger, project_id, document_name):
         self.logger = logger
         self.document_name = document_name
+        self.project_id = project_id
         self.sqs_helper = SQSHelper()
         self.s3_utils = S3Utils()
 
@@ -118,11 +120,18 @@ class LLMProcessing:
         return x
 
     async def process_doc(self, input_message):
-        output_message = {'status': None, 'document_name': self.document_name, 'output_path': None}
+        output_message = {'status': None, 'project_id': self.project_id, 'document_name': self.document_name, 'output_path': None}
         try:
-            local_file_path = os.path.join(MedicalInsights.JSON_STORE_PATH, f"{self.document_name}.json")
+            if '/split_documents/' in input_message['document_path']:
+                pdf_name_without_pattern = re.sub(r'_\d+_to_\d+', '', self.document_name)
+                local_file_path = os.path.join(MedicalInsights.JSON_STORE_PATH, f"{pdf_name_without_pattern.replace('.pdf', '.json')}")
+            else:
+                local_file_path = os.path.join(MedicalInsights.JSON_STORE_PATH, f"{self.document_name.replace('.pdf', '.json')}")
+
+            if not os.path.exists(MedicalInsights.JSON_STORE_PATH):
+                os.makedirs(MedicalInsights.JSON_STORE_PATH)
+
             json_path = input_message['textract_json_path']
-            await self.s3_utils.check_s3_path_exists(AWS.S3.S3_BUCKET, json_path)
             await self.s3_utils.download_object(AWS.S3.S3_BUCKET, json_path, local_file_path)
 
             with open(local_file_path, 'r') as json_file:
@@ -161,7 +170,8 @@ class LLMProcessing:
 
                 s3_pdf_folder = os.path.dirname(json_path)
                 s3_output_folder = s3_pdf_folder.replace(MedicalInsights.TEXTRACT_FOLDER_NAME, MedicalInsights.RESPONSE_FOLDER_NAME)
-                output_file_name = os.path.splitext(self.document_name.replace('_text', ''))[0] + '_output.json'
+                pdf_base_name = os.path.basename(json_path)
+                output_file_name = os.path.splitext(pdf_base_name.replace('_text', ''))[0] + '_output.json'
                 s3_output_key = os.path.join(s3_output_folder, output_file_name)
                 output = json.dumps(output)
                 output = output.encode("utf-8")
