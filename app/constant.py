@@ -34,6 +34,7 @@ class MedicalInsights:
     REQUEST_FOLDER_NAME = "request"
     RESPONSE_FOLDER_NAME = "response"
     TEXTRACT_FOLDER_NAME = "textract_response"
+    JSON_STORE_PATH = 'app/static/textract_response_json'
 
     class Prompts:
         PROMPT_TEMPLATE = """
