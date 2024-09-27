@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import re
 import shutil
 import os
 import time
@@ -122,11 +121,7 @@ class LLMProcessing:
     async def process_doc(self, input_message):
         output_message = {'status': None, 'project_id': self.project_id, 'document_name': self.document_name, 'output_path': None}
         try:
-            if '/split_documents/' in input_message['document_path']:
-                pdf_name_without_pattern = re.sub(r'_\d+_to_\d+', '', self.document_name)
-                local_file_path = os.path.join(MedicalInsights.JSON_STORE_PATH, f"{pdf_name_without_pattern.replace('.pdf', '.json')}")
-            else:
-                local_file_path = os.path.join(MedicalInsights.JSON_STORE_PATH, f"{self.document_name.replace('.pdf', '.json')}")
+            local_file_path = os.path.join(MedicalInsights.JSON_STORE_PATH, f"{self.document_name.replace('.pdf', '.json')}")
 
             if not os.path.exists(MedicalInsights.JSON_STORE_PATH):
                 os.makedirs(MedicalInsights.JSON_STORE_PATH)

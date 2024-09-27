@@ -25,7 +25,6 @@ async def main():
         input_message_dict = json.loads(input_message)
         project_id, document_name = await get_project_id_and_document(input_message_dict['document_path'])
         logger = get_cloudwatch_logger(project_id, document_name, AWS.CloudWatch.LLM_PROCESSING_STREAM)
-        logger.info(f"Input message: {input_message}")
         llm_processor = LLMProcessing(logger, project_id, document_name)
         await llm_processor.process_doc(input_message_dict)
     except Exception as e:
