@@ -25,8 +25,8 @@ class PackagePathFilter(logging.Filter):
 
 def get_cloudwatch_handler(log_stream_name):
     return watchtower.CloudWatchLogHandler(
-        log_group=AWS.CloudWatch.LOG_GROUP,
-        stream_name=log_stream_name,
+        log_group_name=AWS.CloudWatch.LOG_GROUP,
+        log_stream_name=log_stream_name,
         boto3_client=logs_client
     )
 
