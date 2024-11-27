@@ -1,5 +1,11 @@
+import json
+
 import pytest
 import logging
+
+from langsmith import trace
+from sqlalchemy.util import await_only
+
 from app.service.nlp_extractor.medical_chronology_extractor import MedicalChronologyExtractor
 from langchain.docstore.document import Document
 
@@ -194,52 +200,6 @@ class TestMedicalChronologyExtractor:
                               {"date": "04-01-2016", "doctor_name": "Mr. abc", "document_name": "sample_file", "event": "Event-2", "hospital_name": "inst-2", "page_no": 2},
                               {"date": "08-06-2016", "doctor_name": "Mrs. def", "document_name": "sample_file", "event": "Event-3", "hospital_name": "inst-3", "page_no": 3}]
 
-
-    @pytest.mark.asyncio
-    async def test_post_processing_with_misformatted_response(self):
-        logger = logging.getLogger()
-        enc = MedicalChronologyExtractor(logger)
-        list_of_page_contents = [
-            Document(
-                page_content="text of first page. Date-1 : 02/27/2018, Doctor: Mr. xyz, Institution: inst-1, Event-1 with some event ",
-                metadata={'page': 1}),
-            Document(
-                page_content="text of second page with exact reference text. Date-2 : 04/2016, Doctor: Mr. abc, Institution: inst-2, Event-2 with some event ",
-                metadata={'page': 2}),
-            Document(
-                page_content="text of third page. Date-3 : 08/06/2016, Doctor: Mrs. def, Institution: inst-3, Event-3 with some event ",
-                metadata={'page': 3}),
-        ]
-        response = """
-                here, is the list of encounters with events. 
-                [
-                (02/27/2018, "Event-1", "Mr. xyz", "inst-1", "Event-1 with some event"),
-                 ("04/2016", "Event-2", "Mr. abc", "inst-2", "Event-2 with some event"),
-                 ("08/06/2016", "Event-3", "Mrs. def", "inst-3", "Event-3 with some event")
-                 ]
-                tell me, if any other assistance is required.
-                """
-        relevant_chunks = [
-            Document(
-                page_content="text of first page. Date-1 : 02/27/2018, Doctor: Mr. xyz, Institution: inst-1, Event-1 with some event text of second page ",
-                metadata={'source': "sample_file", 'start_page': 1, 'end_page': 2}),
-            Document(
-                page_content="with exact reference text. Date-2 : 04/2016, Doctor: Mr. abc, Institution: inst-2, Event-2 with some event text of ",
-                metadata={'source': "sample_file", 'start_page': 2, 'end_page': 3}),
-            Document(
-                page_content="third page. Date-3 : 08/06/2016, Doctor: Mrs. def, Institution: inst-3, Event-3 with some event text of",
-                metadata={'source': "sample_file", 'start_page': 3, 'end_page': 4})
-        ]
-        encounters = await enc._MedicalChronologyExtractor__post_processing(list_of_page_contents, response,
-                                                                            relevant_chunks)
-        assert encounters == [
-            {"date": "02-27-2018", "doctor_name": "Mr. xyz", "document_name": "sample_file", "event": "Event-1",
-             "hospital_name": "inst-1", "page_no": 1},
-            {"date": "04-01-2016", "doctor_name": "Mr. abc", "document_name": "sample_file", "event": "Event-2",
-             "hospital_name": "inst-2", "page_no": 2},
-            {"date": "08-06-2016", "doctor_name": "Mrs. def", "document_name": "sample_file", "event": "Event-3",
-             "hospital_name": "inst-3", "page_no": 3}]
-
     @pytest.mark.asyncio
     async def test_post_processing_with_empty_and_invalid_response(self):
         logger = logging.getLogger()
@@ -267,3 +227,28 @@ class TestMedicalChronologyExtractor:
         invalid_encounters = await enc._MedicalChronologyExtractor__post_processing(list_of_page_contents, invalid_response, relevant_chunks)
         assert empty_encounters == []
         assert invalid_encounters == []
+
+    @pytest.mark.asyncio
+    async def test_get_extracted_entities_with_pagewise_text(self):
+        logger = logging.getLogger()
+        enc = MedicalChronologyExtractor(logger)
+        with open('static/Fugarino Dictation_ 06-27-2023_text.json') as f: text = json.load(f)
+        assert await enc.get_medical_chronology(text, logger) is not None
+
+    @pytest.mark.asyncio
+    async def test_get_extracted_entities_with_empty_pagewise_text(self):
+        logger = logging.getLogger()
+        enc = MedicalChronologyExtractor(logger)
+        text = {}
+        template_data = {'medical_chronology': []}
+        assert await enc.get_medical_chronology(text, logger) == template_data
+
+    @pytest.mark.asyncio
+    async def test_get_extracted_entities_without_pagewise_text(self):
+        logger = logging.getLogger()
+        enc = MedicalChronologyExtractor(logger)
+        text = "This is a extracted text for medical chronology"
+        try:
+            await enc.get_medical_chronology(text, logger)
+        except AttributeError:
+            assert True

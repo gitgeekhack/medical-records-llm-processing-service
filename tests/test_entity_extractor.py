@@ -1,3 +1,6 @@
+import json
+import logging
+
 import pytest
 from app.service.nlp_extractor import entity_extractor
 
@@ -82,6 +85,27 @@ class TestEntityExtractor:
         {}
         """
         if isinstance(await entity_extractor.convert_str_into_json(json, 1), dict):
+            assert True
+
+    @pytest.mark.asyncio
+    async def test_get_extracted_entities_with_pagewise_text(self):
+        logger = logging.getLogger()
+        with open('static/Fugarino Dictation_ 06-27-2023_text.json') as f: text = json.load(f)
+        assert await entity_extractor.get_extracted_entities(text, logger) is not None
+
+    @pytest.mark.asyncio
+    async def test_get_extracted_entities_with_empty_pagewise_text(self):
+        logger = logging.getLogger()
+        text = {}
+        assert await entity_extractor.get_extracted_entities(text, logger) == {"medical_entities": []}
+
+    @pytest.mark.asyncio
+    async def test_get_extracted_entities_without_pagewise_text(self):
+        logger = logging.getLogger()
+        text = "Medical entities are diabetes and has a past history of Bad cholestrol"
+        try:
+            await entity_extractor.get_extracted_entities(text, logger)
+        except AttributeError:
             assert True
 
 

@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from app.service.nlp_extractor.doc_type_extractor import DocTypeExtractor
 import logging
@@ -76,4 +78,28 @@ class TestDocumentType:
         try:
             await dte._DocTypeExtractor__get_docs_embeddings(page_wise_text)
         except IndexError:
+            assert True
+
+    @pytest.mark.asyncio
+    async def test_extract_document_type_with_pagewise_text(self):
+        logger = logging.getLogger()
+        dte = DocTypeExtractor(logger)
+        with open('static/Fugarino Dictation_ 06-27-2023_text.json') as f: text = json.load(f)
+        assert await dte.extract_document_type(text) is not None
+
+    @pytest.mark.asyncio
+    async def test_extract_document_type_with_empty_pagewise_text(self):
+        logger = logging.getLogger()
+        dte = DocTypeExtractor(logger)
+        text = {}
+        assert await dte.extract_document_type(text) == {'document_type': ''}
+
+    @pytest.mark.asyncio
+    async def test_extract_document_type_without_pagewise_text(self):
+        logger = logging.getLogger()
+        dte = DocTypeExtractor(logger)
+        text = "The document type is Ambulance Report"
+        try:
+            await dte.extract_document_type(text)
+        except AttributeError:
             assert True

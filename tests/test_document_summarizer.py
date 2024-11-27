@@ -1,4 +1,8 @@
+import json
+
 import pytest
+from langchain.chains.qa_generation.prompt import templ
+
 from app.service.nlp_extractor.document_summarizer import DocumentSummarizer
 from app.constant import MedicalInsights
 
@@ -87,3 +91,28 @@ class TestDocumentSummarizer:
         input_summary = ""
         result = await ds._DocumentSummarizer__post_processing(input_summary)
         assert len(result) == 0
+
+    @pytest.mark.asyncio
+    async def test_get_summary_with_pagewise_text(self):
+        logger = logging.getLogger()
+        ds = DocumentSummarizer(logger)
+        with open('static/Fugarino Dictation_ 06-27-2023_text.json') as f: text = json.load(f)
+        assert await ds.get_summary(text) is not None
+
+    @pytest.mark.asyncio
+    async def test_get_summary_with_empty_pagewise_text(self):
+        logger = logging.getLogger()
+        ds = DocumentSummarizer(logger)
+        text = {}
+        template_data = {"summary": MedicalInsights.TemplateResponse.SUMMARY_RESPONSE}
+        assert await ds.get_summary(text) == template_data
+
+    @pytest.mark.asyncio
+    async def test_get_summary_without_pagewise_text(self):
+        logger = logging.getLogger()
+        ds = DocumentSummarizer(logger)
+        text = "This is a summary of the patient report"
+        try:
+            await ds.get_summary(text)
+        except AttributeError:
+            assert True
